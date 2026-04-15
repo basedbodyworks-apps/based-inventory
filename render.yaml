@@ -1,0 +1,129 @@
+services:
+  - type: cron
+    name: based-inventory-quantity
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    schedule: "0 */6 * * *"
+    dockerCommand: python -m based_inventory.jobs.quantity_alerts
+    plan: starter
+    disk:
+      name: state
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: SHOPIFY_STORE
+        sync: false
+      - key: SHOPIFY_TOKEN
+        sync: false
+      - key: SHOPIFY_API_VERSION
+        value: "2026-01"
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_CHANNEL
+        value: C0AK6UGA1NJ
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: STATE_PATH
+        value: /data/alert-state.json
+      - key: ENV
+        value: prod
+      - key: DRY_RUN
+        value: "1"
+      - key: LOG_LEVEL
+        value: INFO
+
+  - type: cron
+    name: based-inventory-atc
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    schedule: "0 13 * * *"
+    dockerCommand: python -m based_inventory.jobs.atc_audit
+    plan: starter
+    disk:
+      name: state
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - fromService:
+          name: based-inventory-quantity
+          type: cron
+          envVarKey: SHOPIFY_STORE
+        key: SHOPIFY_STORE
+      - fromService:
+          name: based-inventory-quantity
+          type: cron
+          envVarKey: SHOPIFY_TOKEN
+        key: SHOPIFY_TOKEN
+      - key: SHOPIFY_API_VERSION
+        value: "2026-01"
+      - fromService:
+          name: based-inventory-quantity
+          type: cron
+          envVarKey: SLACK_BOT_TOKEN
+        key: SLACK_BOT_TOKEN
+      - key: SLACK_CHANNEL
+        value: C0AK6UGA1NJ
+      - fromService:
+          name: based-inventory-quantity
+          type: cron
+          envVarKey: TELEGRAM_BOT_TOKEN
+        key: TELEGRAM_BOT_TOKEN
+      - fromService:
+          name: based-inventory-quantity
+          type: cron
+          envVarKey: TELEGRAM_CHAT_ID
+        key: TELEGRAM_CHAT_ID
+      - key: STATE_PATH
+        value: /data/alert-state.json
+      - key: ENV
+        value: prod
+      - key: DRY_RUN
+        value: "1"
+      - key: LOG_LEVEL
+        value: INFO
+
+  - type: cron
+    name: based-inventory-weekly
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    schedule: "0 16 * * 5"
+    dockerCommand: python -m based_inventory.jobs.weekly_snapshot
+    plan: starter
+    envVars:
+      - fromService:
+          name: based-inventory-quantity
+          type: cron
+          envVarKey: SHOPIFY_STORE
+        key: SHOPIFY_STORE
+      - fromService:
+          name: based-inventory-quantity
+          type: cron
+          envVarKey: SHOPIFY_TOKEN
+        key: SHOPIFY_TOKEN
+      - key: SHOPIFY_API_VERSION
+        value: "2026-01"
+      - fromService:
+          name: based-inventory-quantity
+          type: cron
+          envVarKey: SLACK_BOT_TOKEN
+        key: SLACK_BOT_TOKEN
+      - key: SLACK_CHANNEL
+        value: C0AK6UGA1NJ
+      - fromService:
+          name: based-inventory-quantity
+          type: cron
+          envVarKey: TELEGRAM_BOT_TOKEN
+        key: TELEGRAM_BOT_TOKEN
+      - fromService:
+          name: based-inventory-quantity
+          type: cron
+          envVarKey: TELEGRAM_CHAT_ID
+        key: TELEGRAM_CHAT_ID
+      - key: ENV
+        value: prod
+      - key: DRY_RUN
+        value: "1"
+      - key: LOG_LEVEL
+        value: INFO
