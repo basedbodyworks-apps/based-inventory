@@ -21,7 +21,10 @@ def fake_product():
                 "inventoryItem": {
                     "tracked": True,
                     "inventoryLevels": [
-                        {"available": 3000, "location": {"id": "loc1", "name": "TX", "shipsInventory": True}},
+                        {
+                            "available": 3000,
+                            "location": {"id": "loc1", "name": "TX", "shipsInventory": True},
+                        },
                     ],
                 },
             },
@@ -34,7 +37,10 @@ def fake_product():
                 "inventoryItem": {
                     "tracked": True,
                     "inventoryLevels": [
-                        {"available": 200, "location": {"id": "loc1", "name": "TX", "shipsInventory": True}},
+                        {
+                            "available": 200,
+                            "location": {"id": "loc1", "name": "TX", "shipsInventory": True},
+                        },
                     ],
                 },
             },
