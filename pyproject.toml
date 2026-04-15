@@ -20,6 +20,7 @@ ignore = ["E501"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
+markers = ["playwright: tests that require a running browser"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
