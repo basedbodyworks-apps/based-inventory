@@ -10,9 +10,13 @@ venv/
 .coverage
 htmlcov/
 
-# Env
+# Env and secrets
 .env
 .env.local
+*secret*
+*.key
+*.pem
+*.rtf
 
 # State (persisted on Render Disk, never committed)
 data/alert-state.json
