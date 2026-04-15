@@ -139,6 +139,18 @@ def compute_expected_states(
     return expected_by_gid
 
 
+def _dedupe_flags_by_state_key(flags: list[Flag]) -> list[Flag]:
+    """Keep the first occurrence of each state_key."""
+    seen: set[str] = set()
+    out: list[Flag] = []
+    for flag in flags:
+        if flag.state_key in seen:
+            continue
+        seen.add(flag.state_key)
+        out.append(flag)
+    return out
+
+
 def build_atc_blocks(flags: list[Flag]) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = [
         header(f"⚡ ATC Audit: {len(flags)} disagreement(s)"),
@@ -296,7 +308,9 @@ def _run(cfg: Config) -> None:
 
     # Dedup: only post NEW flags
     now_iso = datetime.now(timezone.utc).isoformat()  # noqa: UP017
-    new_flags = [f for f in all_flags if state.is_new_atc_flag(f.state_key)]
+    new_flags = _dedupe_flags_by_state_key(
+        [f for f in all_flags if state.is_new_atc_flag(f.state_key)]
+    )
 
     # Update state with ALL current flags (including persistent ones), prune resolved
     state.retain_only_atc_flags({f.state_key for f in all_flags})
