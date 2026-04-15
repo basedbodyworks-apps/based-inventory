@@ -37,10 +37,18 @@ class AlertState:
         except (json.JSONDecodeError, OSError) as exc:
             logger.warning("Could not load state from %s: %s; starting fresh", p, exc)
             return cls()
-        return cls(
-            quantity_tiers=data.get("quantity_tiers", {}),
-            atc_flags=data.get("atc_flags", {}),
-        )
+        if not isinstance(data, dict):
+            logger.warning("State file %s has wrong shape (expected object); starting fresh", p)
+            return cls()
+        qt = data.get("quantity_tiers", {})
+        af = data.get("atc_flags", {})
+        if not isinstance(qt, dict):
+            logger.warning("State file %s 'quantity_tiers' is not an object; ignoring", p)
+            qt = {}
+        if not isinstance(af, dict):
+            logger.warning("State file %s 'atc_flags' is not an object; ignoring", p)
+            af = {}
+        return cls(quantity_tiers=qt, atc_flags=af)
 
     def save(self, path: Path | str) -> None:
         p = Path(path)

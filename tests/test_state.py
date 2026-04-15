@@ -68,6 +68,22 @@ def test_save_and_reload(tmp_path: Path):
     assert reloaded.is_new_atc_flag("k1") is False
 
 
+def test_load_wrong_shape_returns_empty(tmp_path: Path):
+    path = tmp_path / "wrong.json"
+    path.write_text("[1, 2, 3]")
+    state = AlertState.load(path)
+    assert state.quantity_tiers == {}
+    assert state.atc_flags == {}
+
+
+def test_load_wrong_value_types_returns_empty(tmp_path: Path):
+    path = tmp_path / "weird.json"
+    path.write_text('{"quantity_tiers": "oops", "atc_flags": [1,2]}')
+    state = AlertState.load(path)
+    assert state.quantity_tiers == {}
+    assert state.atc_flags == {}
+
+
 def test_clear_atc_flags_not_in_set(tmp_path: Path):
     state = AlertState.load(tmp_path / "s.json")
     state.mark_atc_flag("k1", now="2026-04-15T06:00:00Z")

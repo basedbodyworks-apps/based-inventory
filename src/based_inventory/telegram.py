@@ -35,8 +35,8 @@ class TelegramFallback:
                 timeout=15,
             )
             result = response.json()
-        except requests.RequestException as exc:
-            logger.error("Telegram send failed: %s", exc)
+        except (requests.RequestException, ValueError) as exc:
+            logger.error("Telegram send failed: %s", type(exc).__name__)
             return False
 
         if not result.get("ok"):

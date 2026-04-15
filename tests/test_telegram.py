@@ -42,6 +42,30 @@ def test_send_handles_api_error(monkeypatch):
     assert ok is False
 
 
+def test_send_does_not_leak_token_on_exception(monkeypatch, caplog):
+    import logging
+
+    class FakeError(Exception):
+        pass
+
+    def raising_post(*args, **kwargs):
+        raise __import__("requests").exceptions.ConnectionError(
+            "HTTPSConnectionPool(host='api.telegram.org', port=443): "
+            "url: /bot12345:SECRET_TOKEN/sendMessage"
+        )
+
+    monkeypatch.setattr("based_inventory.telegram.requests.post", raising_post)
+
+    caplog.set_level(logging.ERROR, logger="based_inventory.telegram")
+    tg = TelegramFallback(bot_token="12345:SECRET_TOKEN", chat_id="-100123")
+    ok = tg.send("hello")
+
+    assert ok is False
+    log_output = " ".join(record.getMessage() for record in caplog.records)
+    assert "SECRET_TOKEN" not in log_output
+    assert "12345" not in log_output
+
+
 def _mock_response(payload):
     response = MagicMock()
     response.json.return_value = payload
