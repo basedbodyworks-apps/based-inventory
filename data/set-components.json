@@ -1,0 +1,34 @@
+{
+  "_note": "Website sets → component singles. Sets are virtual bundles; inventory constrained by lowest component.",
+  "_note2": "Daily Facial Cleanser and Daily Facial Moisturizer have their own SKUs but NO individual website listings.",
+  "sets": {
+    "Shower Duo": ["Shampoo", "Conditioner"],
+
+    "Complete Styling Kit": ["Texture Powder", "Sea Salt Spray", "Pomade", "Hair Clay"],
+    "Texture Essentials": ["Texture Powder", "Sea Salt Spray"],
+    "Matte Texture Duo": ["Texture Powder", "Hair Clay"],
+    "Texture & Hold Duo": ["Sea Salt Spray", "Hair Clay"],
+    "Beachy Flow Duo": ["Sea Salt Spray", "Pomade"],
+    "Style & Hydration Duo": ["Leave-In Conditioner", "Pomade"],
+
+    "Complete Curly Kit": ["Leave-In Conditioner", "Curl Cream", "Curl Mousse", "Curl Gel", "Curl Refresh Spray"],
+    "Curly Duo": ["Curl Cream", "Leave-In Conditioner"],
+    "Definition & Hold Duo": ["Curl Cream", "Curl Gel"],
+    "Definition & Volume Duo": ["Curl Cream", "Curl Mousse"],
+    "Definition & Refresh Duo": ["Curl Cream", "Curl Refresh Spray"],
+    "Hydration & Hold Duo": ["Leave-In Conditioner", "Curl Gel"],
+    "Hydration & Volume Duo": ["Leave-In Conditioner", "Curl Mousse"],
+    "Hydration & Refresh Duo": ["Leave-In Conditioner", "Curl Refresh Spray"],
+    "Volume & Refresh Duo": ["Curl Mousse", "Curl Refresh Spray"],
+    "Volume & Hold Duo": ["Curl Mousse", "Curl Gel"],
+    "Hold & Refresh Duo": ["Curl Gel", "Curl Refresh Spray"],
+
+    "Daily Skincare Duo": ["Daily Facial Cleanser", "Daily Facial Moisturizer"],
+    "Full Skincare Kit": ["Daily Facial Cleanser", "Daily Facial Moisturizer", "Skin Revival Spray", "Under Eye Elixir"],
+    "Revitalizing Trio": ["Daily Facial Cleanser", "Daily Facial Moisturizer", "Under Eye Elixir"],
+    "Refreshing Trio": ["Daily Facial Cleanser", "Daily Facial Moisturizer", "Skin Revival Spray"],
+
+    "Shower Essentials": ["Shampoo", "Conditioner", "Body Wash"],
+    "Body Care Set": ["Body Wash", "Deodorant"]
+  }
+}
