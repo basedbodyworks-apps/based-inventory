@@ -1,0 +1,6 @@
+{
+  "products": [
+    {"id": 1, "handle": "shampoo", "title": "Shampoo"},
+    {"id": 2, "handle": "curl-cream", "title": "Curl Cream"}
+  ]
+}
