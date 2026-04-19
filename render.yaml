@@ -73,16 +73,10 @@ services:
         key: SLACK_BOT_TOKEN
       - key: SLACK_CHANNEL
         value: C0AK6UGA1NJ
-      - fromService:
-          name: based-inventory-quantity
-          type: cron
-          envVarKey: TELEGRAM_BOT_TOKEN
-        key: TELEGRAM_BOT_TOKEN
-      - fromService:
-          name: based-inventory-quantity
-          type: cron
-          envVarKey: TELEGRAM_CHAT_ID
-        key: TELEGRAM_CHAT_ID
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
       - key: STATE_PATH
         fromService:
           type: keyvalue
@@ -127,16 +121,10 @@ services:
         key: SLACK_BOT_TOKEN
       - key: SLACK_CHANNEL
         value: C0AK6UGA1NJ
-      - fromService:
-          name: based-inventory-quantity
-          type: cron
-          envVarKey: TELEGRAM_BOT_TOKEN
-        key: TELEGRAM_BOT_TOKEN
-      - fromService:
-          name: based-inventory-quantity
-          type: cron
-          envVarKey: TELEGRAM_CHAT_ID
-        key: TELEGRAM_CHAT_ID
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
       - key: ENV
         value: prod
       - key: DRY_RUN
