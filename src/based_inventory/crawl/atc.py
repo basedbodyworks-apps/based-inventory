@@ -148,10 +148,15 @@ class AtcCrawler:
         """Audit a single URL. Returns one VariantObservation per ATC element on the page."""
         page = self._new_page()
         try:
-            page.goto(url, wait_until="networkidle", timeout=30_000)
-            # Some Based pages hydrate product cards lazily on scroll; nudge them.
+            # wait_until="load" instead of "networkidle": Based's pages have
+            # long-tail analytics and chat-widget pings that prevent true
+            # network idle. "load" fires when window.load event fires;
+            # after that we give React ~2.5s to hydrate product cards.
+            page.goto(url, wait_until="load", timeout=20_000)
+            page.wait_for_timeout(2500)
+            # Nudge lazy-loaded product cards on long collection pages.
             page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            page.wait_for_timeout(1000)
+            page.wait_for_timeout(1500)
             page.evaluate("window.scrollTo(0, 0)")
             page.wait_for_timeout(500)
         except Exception as exc:
