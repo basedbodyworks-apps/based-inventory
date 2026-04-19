@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from based_inventory.auth import fetch_access_token
 from based_inventory.config import Config
 from based_inventory.jobs._common import run_job
 from based_inventory.sets import SetResolver
@@ -98,7 +99,8 @@ def build_blocks(alerts: list[Alert]) -> list[dict[str, Any]]:
 
 
 def _run(cfg: Config) -> None:
-    shopify = ShopifyClient(cfg.shopify_store, cfg.shopify_token, cfg.shopify_api_version)
+    token = fetch_access_token(cfg.shopify_store, cfg.shopify_client_id, cfg.shopify_client_secret)
+    shopify = ShopifyClient(cfg.shopify_store, token, cfg.shopify_api_version)
     set_resolver = SetResolver(COMPONENTS_PATH)
     state = AlertState.load(cfg.state_path)
     slack = SlackClient(cfg.slack_bot_token, cfg.slack_channel, dry_run=cfg.dry_run)

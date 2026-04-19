@@ -9,7 +9,8 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class Config:
     shopify_store: str
-    shopify_token: str
+    shopify_client_id: str
+    shopify_client_secret: str
     shopify_api_version: str
     slack_bot_token: str
     slack_channel: str
@@ -34,7 +35,8 @@ class Config:
 
         return cls(
             shopify_store=required("SHOPIFY_STORE"),
-            shopify_token=required("SHOPIFY_TOKEN"),
+            shopify_client_id=required("SHOPIFY_CLIENT_ID"),
+            shopify_client_secret=required("SHOPIFY_CLIENT_SECRET"),
             shopify_api_version=optional("SHOPIFY_API_VERSION", "2026-01") or "2026-01",
             slack_bot_token=required("SLACK_BOT_TOKEN"),
             slack_channel=required("SLACK_CHANNEL"),

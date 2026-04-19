@@ -346,20 +346,24 @@ Corruption recovery: if the file is missing or invalid JSON, reset to `{}` and l
 
 ### 8.1 App posture
 
-New Shopify app in the Based Partners org ([partners.shopify.com/4860762](https://partners.shopify.com/4860762/)). App name: "Based Inventory". Scopes:
+New Shopify app in the Based Dev Dashboard org ([dev.shopify.com/dashboard/214174387/apps](https://dev.shopify.com/dashboard/214174387/apps)). App name: "Based Inventory". Distribution: Custom Distribution. Scopes:
 
 - `read_products`
 - `read_inventory`
 - `read_locations`
 
-Install flow:
+**Important:** As of January 1, 2026, Shopify deprecated the legacy store-admin "Develop apps" flow that historically issued reveal-once `shpat_` tokens in the UI. The new Dev Dashboard does not display access tokens anywhere. This bot uses OAuth 2.0 Client Credentials Grant: each cron run POSTs the app's Client ID + Client Secret to `/admin/oauth/access_token` and receives a 24h `shpat_` token (expires_in: 86399). No webhook callback, no authorization code, no manual install dance per token rotation.
 
-1. Partners dashboard → Apps → Create app → "Based Inventory"
-2. Configure Admin API scopes above
-3. Generate a custom install link
-4. Install on the dev store first; save token as `SHOPIFY_TOKEN_DEV`
-5. Install on prod (`basedbodyworks.com`) when crawler is verified on dev; save as `SHOPIFY_TOKEN_PROD`
-6. Render cron services read store domain + token from env vars
+Requirement: the Dev Dashboard org must be linked to the merchant org that owns the target store. If the Dev Dashboard org is an orphan (not linked to a merchant org), the token endpoint returns HTTP 400 `shop_not_permitted`. Resolution path is to create the Dev Dashboard via Admin → store name (top-right) → "Dev Dashboard", which auto-links.
+
+Install flow (per-store, one-time):
+
+1. Dev Dashboard → Based Inventory → Configuration: set Admin API access scopes to `read_products`, `read_inventory`, `read_locations` (plus any read-only extras like `read_inventory_shipments` for future v1 features).
+2. Distribution: Custom Distribution. Copy the install link.
+3. Install on `basedbodyworks.myshopify.com`. Approve consent on the store.
+4. In Render, set `SHOPIFY_CLIENT_ID` and `SHOPIFY_CLIENT_SECRET` env vars. The app fetches a fresh token each run via `fetch_access_token()` in `src/based_inventory/auth.py`.
+
+Implementation: `src/based_inventory/auth.py` exposes `fetch_access_token(store, client_id, client_secret) -> str`. Each job's `_run()` calls it before constructing the `ShopifyClient`. The token is never persisted; it lives only for the duration of the cron run.
 
 ### 8.2 GraphQL queries
 
