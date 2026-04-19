@@ -4,9 +4,14 @@ from based_inventory.crawl.atc import VariantObservation
 from based_inventory.crawl.diff import ExpectedState, Flag, FlagType, generate_flags  # noqa: F401
 
 
-def _obs(url, variant=None, present=True, enabled=True, text="Add to cart"):
+def _obs(url, variant=None, present=True, enabled=True, text="Add to cart", handle=None):
     return VariantObservation(
-        url=url, variant_label=variant, present=present, enabled=enabled, text=text
+        url=url,
+        product_handle=handle,
+        variant_label=variant,
+        present=present,
+        enabled=enabled,
+        text=text,
     )
 
 
