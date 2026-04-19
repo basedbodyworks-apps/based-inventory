@@ -11,7 +11,6 @@ def test_build_blocks_renders_header_and_sections():
             qty=50,
             threshold=100,
             variant_info="`SHAMPOO-SINGLE`",
-            mention_ids=["U1", "U2", "U3"],
             admin_url="https://admin.shopify.com/store/basedbodyworks/products/1",
             affected_sets=["Shower Duo", "Shower Essentials"],
         ),
@@ -33,5 +32,6 @@ def test_build_blocks_renders_header_and_sections():
 
     footer = blocks[-1]
     assert footer["type"] == "context"
-    assert "<@U1>" in footer["elements"][0]["text"]
-    assert "<!channel>" in footer["elements"][0]["text"]
+    footer_text = footer["elements"][0]["text"]
+    assert "<@" not in footer_text
+    assert "<!channel>" not in footer_text

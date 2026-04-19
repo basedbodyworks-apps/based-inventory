@@ -34,11 +34,6 @@ from based_inventory.state import AlertState
 
 logger = logging.getLogger(__name__)
 
-# User IDs (same as quantity_alerts)
-CARLOS = "U08LCCS7V5Z"
-RYAN = "U0AHP969HC5"
-ALEX = "U09GXTYGT44"
-
 FLAG_ICONS = {
     FlagType.SALES_LEAK: "🛒",
     FlagType.OVERSELL_RISK: "⚠️",
@@ -49,12 +44,6 @@ FLAG_LABELS = {
     FlagType.SALES_LEAK: "SALES LEAK",
     FlagType.OVERSELL_RISK: "OVERSELL RISK",
     FlagType.NO_BUY_BUTTON: "NO BUY BUTTON",
-}
-
-FLAG_MENTIONS = {
-    FlagType.OVERSELL_RISK: [CARLOS],
-    FlagType.SALES_LEAK: [ALEX, RYAN],
-    FlagType.NO_BUY_BUTTON: [ALEX, RYAN],
 }
 
 V0_LIMITATION_FOOTER = (
@@ -178,16 +167,7 @@ def build_atc_blocks(flags: list[Flag]) -> list[dict[str, Any]]:
     blocks.append(divider())
 
     ts = time.strftime("%b %d, %I:%M %p PST", time.gmtime(time.time() - 7 * 3600))
-    all_mentions: list[str] = []
-    for f in flags:
-        for uid in FLAG_MENTIONS[f.flag_type]:
-            if uid not in all_mentions:
-                all_mentions.append(uid)
-    footer_text = f"🕐 {ts}"
-    if all_mentions:
-        footer_text += "\n\n" + "  ".join(f"<@{uid}>" for uid in all_mentions)
-    footer_text += "\n<!channel>"
-    blocks.append(context(footer_text))
+    blocks.append(context(f"🕐 {ts}"))
     return blocks
 
 

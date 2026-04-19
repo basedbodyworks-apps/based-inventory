@@ -57,9 +57,8 @@ def test_atc_blocks_includes_all_flag_types_and_v0_footer():
     assert "ShipHero" in texts
 
     footer = blocks[-1]["elements"][0]["text"]
-    assert "<!channel>" in footer
-    assert "<@U08LCCS7V5Z>" in footer  # Carlos for OVERSELL
-    assert "<@U0AHP969HC5>" in footer  # Ryan for SALES LEAK / NO BUY
+    assert "<@" not in footer
+    assert "<!channel>" not in footer
 
 
 def test_dedupe_flags_by_state_key():

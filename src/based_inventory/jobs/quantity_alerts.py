@@ -23,17 +23,13 @@ from based_inventory.skip_list import should_skip
 from based_inventory.slack import SlackClient, context, divider, header, section
 from based_inventory.state import AlertState
 
-# Slack user IDs (confirmed against Inventory Brain check_inventory.py:35-37)
-CARLOS = "U08LCCS7V5Z"
-RYAN = "U0AHP969HC5"
-ALEX = "U09GXTYGT44"
-
-# Threshold ladder (ported from check_inventory.py:39-44)
-THRESHOLDS: list[tuple[int, str, list[str]]] = [
-    (100, "🚨 CRITICAL", [CARLOS, RYAN, ALEX]),
-    (500, "🔴 LOW STOCK", [CARLOS]),
-    (750, "🟠 WARNING", [CARLOS]),
-    (1000, "🟡 HEADS UP", []),
+# Threshold ladder (ported from check_inventory.py:39-44).
+# Individual @-mentions intentionally omitted; <!channel> still fires below.
+THRESHOLDS: list[tuple[int, str]] = [
+    (100, "🚨 CRITICAL"),
+    (500, "🔴 LOW STOCK"),
+    (750, "🟠 WARNING"),
+    (1000, "🟡 HEADS UP"),
 ]
 
 STORE_ADMIN = "https://admin.shopify.com/store/basedbodyworks"
@@ -47,15 +43,14 @@ class Alert:
     qty: int
     threshold: int
     variant_info: str
-    mention_ids: list[str]
     admin_url: str
     affected_sets: list[str]
 
 
-def _tier_for(qty: int) -> tuple[int, str, list[str]] | None:
-    for threshold, label, mentions in THRESHOLDS:
+def _tier_for(qty: int) -> tuple[int, str] | None:
+    for threshold, label in THRESHOLDS:
         if qty <= threshold:
-            return threshold, label, mentions
+            return threshold, label
     return None
 
 
@@ -83,18 +78,7 @@ def build_blocks(alerts: list[Alert]) -> list[dict[str, Any]]:
     blocks.append(divider())
 
     ts = time.strftime("%b %d, %I:%M %p PST", time.gmtime(time.time() - 7 * 3600))
-    footer_text = f"🕐  {ts}"
-
-    all_mentions: list[str] = []
-    for a in alerts:
-        for uid in a.mention_ids:
-            if uid not in all_mentions:
-                all_mentions.append(uid)
-    if all_mentions:
-        footer_text += "\n\n" + "  ".join(f"<@{uid}>" for uid in all_mentions)
-    footer_text += "\n<!channel>"
-
-    blocks.append(context(footer_text))
+    blocks.append(context(f"🕐  {ts}"))
     return blocks
 
 
@@ -126,7 +110,7 @@ def _run(cfg: Config) -> None:
             state.clear_tier(title)
             continue
 
-        threshold, label, mentions = tier
+        threshold, label = tier
         new_tiers[title] = threshold
 
         if state.crosses_lower_tier(title, threshold):
@@ -144,7 +128,6 @@ def _run(cfg: Config) -> None:
                     qty=result.qty,
                     threshold=threshold,
                     variant_info=variant_info,
-                    mention_ids=mentions,
                     admin_url=f"{STORE_ADMIN}/products/{_product_id(product['id'])}",
                     affected_sets=set_resolver.sets_containing(title),
                 )

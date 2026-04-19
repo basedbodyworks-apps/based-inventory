@@ -123,7 +123,7 @@ def build_snapshot_blocks(
     blocks.append(divider())
     blocks.append(
         context(
-            "🟢 5K+  ·  📊 1K-5K  ·  🟡 ≤1K  ·  🟠 ≤750  ·  🔴 ≤500  ·  🚨 ≤100  ·  ⛔ Oversold\n<!channel>"
+            "🟢 5K+  ·  📊 1K-5K  ·  🟡 ≤1K  ·  🟠 ≤750  ·  🔴 ≤500  ·  🚨 ≤100  ·  ⛔ Oversold"
         )
     )
     return blocks
