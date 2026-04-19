@@ -30,7 +30,10 @@ query($cursor: String) {
                 inventoryLevels(first: 10) {
                   edges {
                     node {
-                      available
+                      quantities(names: ["available"]) {
+                        name
+                        quantity
+                      }
                       location {
                         id
                         name
@@ -101,13 +104,18 @@ class ShopifyClient:
     def _flatten_variant(node: dict[str, Any]) -> dict[str, Any]:
         item = node.get("inventoryItem") or {}
         levels_container = item.get("inventoryLevels") or {}
-        levels = [
-            {
-                "available": lvl["node"]["available"],
-                "location": lvl["node"]["location"],
-            }
-            for lvl in levels_container.get("edges", [])
-        ]
+        levels = []
+        for lvl in levels_container.get("edges", []):
+            lnode = lvl["node"]
+            available = next(
+                (
+                    q["quantity"]
+                    for q in lnode.get("quantities", [])
+                    if q.get("name") == "available"
+                ),
+                0,
+            )
+            levels.append({"available": available, "location": lnode["location"]})
         return {
             "id": node["id"],
             "title": node["title"],
