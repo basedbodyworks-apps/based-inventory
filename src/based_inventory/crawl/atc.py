@@ -146,21 +146,25 @@ class AtcCrawler:
 
     def audit_url(self, url: str) -> list[VariantObservation]:
         """Audit a single URL. Returns one VariantObservation per ATC element on the page."""
+        t0 = time.monotonic()
         page = self._new_page()
+        needs_lazy_scroll = "/collections/" in url
         try:
             # wait_until="load" instead of "networkidle": Based's pages have
             # long-tail analytics and chat-widget pings that prevent true
             # network idle. "load" fires when window.load event fires;
-            # after that we give React ~2.5s to hydrate product cards.
-            page.goto(url, wait_until="load", timeout=20_000)
-            page.wait_for_timeout(2500)
-            # Nudge lazy-loaded product cards on long collection pages.
-            page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-            page.wait_for_timeout(1500)
-            page.evaluate("window.scrollTo(0, 0)")
-            page.wait_for_timeout(500)
+            # after that we give React ~1s to hydrate product cards.
+            page.goto(url, wait_until="load", timeout=12_000)
+            page.wait_for_timeout(1000)
+            if needs_lazy_scroll:
+                # Collection grids lazy-load cards as you scroll.
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                page.wait_for_timeout(750)
+                page.evaluate("window.scrollTo(0, 0)")
+                page.wait_for_timeout(250)
         except Exception as exc:
-            logger.warning("Failed to load %s: %s", url, exc)
+            elapsed = time.monotonic() - t0
+            logger.warning("Failed to load %s after %.1fs: %s", url, elapsed, exc)
             page.context.close()
             return []
 
@@ -182,6 +186,9 @@ class AtcCrawler:
             )
             for entry in (raw or [])
         ]
+
+        elapsed = time.monotonic() - t0
+        logger.info("Audited %s in %.1fs (%d obs)", url, elapsed, len(observations))
 
         self._throttle()
         page.context.close()
