@@ -9,7 +9,7 @@ import requests
 
 _PRODUCTS_QUERY = """
 query($cursor: String) {
-  products(first: 50, query: "status:active", after: $cursor) {
+  products(first: 10, query: "status:active", after: $cursor) {
     edges {
       cursor
       node {
