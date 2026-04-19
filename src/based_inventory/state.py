@@ -3,7 +3,12 @@
 Stores the last-observed severity tier per product (quantity alerts)
 and the set of currently-flagged ATC anomalies (ATC audit).
 
-File format:
+Backend dispatch:
+- If the location starts with `redis://` or `rediss://`, a Redis
+  backend is used (single JSON blob at key REDIS_STATE_KEY).
+- Otherwise the location is a filesystem path (JSON file).
+
+Payload shape (both backends):
 {
   "quantity_tiers": {"Shampoo": 500, "Conditioner": 1000},
   "atc_flags": {
@@ -18,8 +23,71 @@ import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+REDIS_STATE_KEY = "based-inventory:alert-state"
+
+
+def _is_redis_url(location: str) -> bool:
+    return location.startswith("redis://") or location.startswith("rediss://")
+
+
+def _read_redis(url: str) -> dict[str, Any]:
+    import redis
+
+    client = redis.from_url(url, decode_responses=True, socket_timeout=10)
+    try:
+        raw = client.get(REDIS_STATE_KEY)
+    finally:
+        client.close()
+    if raw is None:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        logger.warning("Redis state at %s is not valid JSON: %s; starting fresh", url, exc)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_redis(url: str, payload: dict[str, Any]) -> None:
+    import redis
+
+    client = redis.from_url(url, decode_responses=True, socket_timeout=10)
+    try:
+        client.set(REDIS_STATE_KEY, json.dumps(payload))
+    finally:
+        client.close()
+
+
+def _read_file(p: Path) -> dict[str, Any]:
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        logger.warning("Could not load state from %s: %s; starting fresh", p, exc)
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_file(p: Path, payload: dict[str, Any]) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(payload, indent=2))
+
+
+def _coerce(data: dict[str, Any]) -> tuple[dict[str, int], dict[str, dict[str, str]]]:
+    qt = data.get("quantity_tiers", {})
+    af = data.get("atc_flags", {})
+    if not isinstance(qt, dict):
+        logger.warning("state 'quantity_tiers' is not an object; ignoring")
+        qt = {}
+    if not isinstance(af, dict):
+        logger.warning("state 'atc_flags' is not an object; ignoring")
+        af = {}
+    return qt, af
 
 
 @dataclass
@@ -28,40 +96,22 @@ class AlertState:
     atc_flags: dict[str, dict[str, str]] = field(default_factory=dict)
 
     @classmethod
-    def load(cls, path: Path | str) -> AlertState:
-        p = Path(path)
-        if not p.exists():
-            return cls()
-        try:
-            data = json.loads(p.read_text())
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Could not load state from %s: %s; starting fresh", p, exc)
-            return cls()
-        if not isinstance(data, dict):
-            logger.warning("State file %s has wrong shape (expected object); starting fresh", p)
-            return cls()
-        qt = data.get("quantity_tiers", {})
-        af = data.get("atc_flags", {})
-        if not isinstance(qt, dict):
-            logger.warning("State file %s 'quantity_tiers' is not an object; ignoring", p)
-            qt = {}
-        if not isinstance(af, dict):
-            logger.warning("State file %s 'atc_flags' is not an object; ignoring", p)
-            af = {}
+    def load(cls, location: Path | str) -> AlertState:
+        loc = str(location)
+        data = _read_redis(loc) if _is_redis_url(loc) else _read_file(Path(loc))
+        qt, af = _coerce(data)
         return cls(quantity_tiers=qt, atc_flags=af)
 
-    def save(self, path: Path | str) -> None:
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(
-            json.dumps(
-                {
-                    "quantity_tiers": self.quantity_tiers,
-                    "atc_flags": self.atc_flags,
-                },
-                indent=2,
-            )
-        )
+    def save(self, location: Path | str) -> None:
+        payload = {
+            "quantity_tiers": self.quantity_tiers,
+            "atc_flags": self.atc_flags,
+        }
+        loc = str(location)
+        if _is_redis_url(loc):
+            _write_redis(loc, payload)
+        else:
+            _write_file(Path(loc), payload)
 
     # Quantity tier API
     def get_tier(self, product_title: str) -> int | None:

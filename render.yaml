@@ -1,4 +1,10 @@
 services:
+  - type: keyvalue
+    name: based-inventory-state
+    plan: free
+    ipAllowList: []
+    maxmemoryPolicy: noeviction
+
   - type: cron
     name: based-inventory-quantity
     runtime: docker
@@ -6,10 +12,6 @@ services:
     schedule: "0 */6 * * *"
     dockerCommand: python -m based_inventory.jobs.quantity_alerts
     plan: starter
-    disk:
-      name: state
-      mountPath: /data
-      sizeGB: 1
     envVars:
       - key: SHOPIFY_STORE
         sync: false
@@ -28,7 +30,10 @@ services:
       - key: TELEGRAM_CHAT_ID
         sync: false
       - key: STATE_PATH
-        value: /data/alert-state.json
+        fromService:
+          type: keyvalue
+          name: based-inventory-state
+          property: connectionString
       - key: ENV
         value: prod
       - key: DRY_RUN
@@ -43,10 +48,6 @@ services:
     schedule: "0 13 * * *"
     dockerCommand: python -m based_inventory.jobs.atc_audit
     plan: starter
-    disk:
-      name: state
-      mountPath: /data
-      sizeGB: 1
     envVars:
       - fromService:
           name: based-inventory-quantity
@@ -83,7 +84,10 @@ services:
           envVarKey: TELEGRAM_CHAT_ID
         key: TELEGRAM_CHAT_ID
       - key: STATE_PATH
-        value: /data/alert-state.json
+        fromService:
+          type: keyvalue
+          name: based-inventory-state
+          property: connectionString
       - key: ENV
         value: prod
       - key: DRY_RUN
