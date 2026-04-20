@@ -68,6 +68,18 @@ _ATC_SCAN_JS = r"""
     return m ? m[1] : null;
   })();
 
+  // On PDPs (/products/{handle}), the page's own product owns every ATC
+  // by default. Card-boundary walks on PDPs are actively harmful because
+  // sidebars / cross-sell blocks / recommendation carousels contain links
+  // to OTHER products (Conditioner, Leave-in Conditioner, etc.) and the
+  // walk picks the first ancestor whose subtree has exactly one /products/
+  // link — which is often one of those cross-sells, not the PDP itself.
+  // The result was NO_BUY_BUTTON flags on core PDPs like Shampoo because
+  // the ATC got tagged with a cross-sell's handle.
+  //
+  // On non-PDP pages (collections, landing pages, homepage), the card
+  // walk is the right thing because a single page hosts many product
+  // cards and we need to tag each ATC with the card it belongs to.
   const out = [];
   document.querySelectorAll('*').forEach(el => {
     if (!(el.childNodes && el.childNodes.length === 1 && el.childNodes[0].nodeType === 3)) return;
@@ -76,7 +88,7 @@ _ATC_SCAN_JS = r"""
     const rect = el.getBoundingClientRect();
     const visible = rect.width > 0 && rect.height > 0;
     if (!visible) return;
-    const handle = productHandleFromCard(el) || pageHandle;
+    const handle = pageHandle || productHandleFromCard(el);
     const isOos = OOS_TEXT.test(text);
     out.push({
       product_handle: handle,
