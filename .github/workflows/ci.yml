@@ -7,7 +7,11 @@ on:
 
 jobs:
   lint-test:
-    runs-on: ubuntu-latest
+    # Pinned to 22.04 because Playwright 1.44's `install --with-deps` still
+    # references libasound2, which Ubuntu 24 renamed to libasound2t64.
+    # Bumping Playwright would reach across into production — cheaper to
+    # pin the runner here. Revisit when we upgrade Playwright deliberately.
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
