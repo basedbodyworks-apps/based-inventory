@@ -30,6 +30,14 @@ _SKIP_TITLES: frozenset[str] = frozenset(
         "Hair Revival Serum",
         "Super Serum",
         "Showerhead Filter",
+        # TikTok Shop exclusives. These are live SKUs with their own inventory
+        # but are not sold on basedbodyworks.com. Their /products/{handle}
+        # PDPs inject an Instant Commerce redirect to /pages/not-found.
+        # Monitored via TikTok Shop's own channel, not this bot.
+        "Texture & Style Duo",
+        "Shower Duo + Hair Elixir",
+        "Deluxe Straight/Wavy Hair Kit",
+        "Santal Bodycare Essentials",
     }
 )
 
