@@ -21,6 +21,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
 markers = ["playwright: tests that require a running browser"]
+pythonpath = ["src"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
