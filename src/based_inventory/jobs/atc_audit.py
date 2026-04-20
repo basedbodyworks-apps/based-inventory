@@ -1,21 +1,24 @@
-"""Daily 6am PST: crawl every page on the site, diff ATC vs Shopify truth.
+"""Daily 6am PST: crawl every public URL, diff ATC vs Shopify per variant.
 
 Flow:
-1. Pull Shopify products with inventory + inventoryPolicy
-2. Enumerate every sitemap URL (PDPs, collections, pages, blog, homepage)
-3. Compute expected sellable per product using singles-only math (product-level,
-   since v0.5 observes default variant only; per-variant iteration is v0.6)
-4. Playwright-render each URL, observe every visible ATC + the product
-   handle of the card containing it
-5. Diff each observation against the matching product's expected state
-6. Dedup against persistent state; post only NEW flags
+1. Pull Shopify products + variants with inventory + inventoryPolicy.
+2. Enumerate every sitemap URL (PDPs, collections, pages, blog, homepage).
+3. Index variants by (product_handle, variant_label) so each observation
+   can be matched to its exact Shopify variant.
+4. For each URL:
+   - If it's a PDP, pass the product's variant labels to the crawler so
+     it iterates the scent/pack picker and emits one observation per
+     variant. Matches Shopify variant inventory 1:1.
+   - Otherwise (collection card, landing page), emit whatever ATCs render
+     in the default state and match them to the card's default variant.
+5. Diff observed vs expected per variant; flag mismatches.
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -28,7 +31,6 @@ from based_inventory.crawl.urls import UrlEnumerator
 from based_inventory.jobs._common import run_job
 from based_inventory.sets import SetResolver
 from based_inventory.shopify import ShopifyClient
-from based_inventory.singles import resolve_single
 from based_inventory.skip_list import should_skip
 from based_inventory.slack import SlackClient, context, divider, header, section
 from based_inventory.state import AlertState
@@ -56,50 +58,77 @@ COMPONENTS_PATH = Path(__file__).resolve().parents[3] / "data" / "set-components
 
 
 @dataclass(frozen=True)
-class ExpectedProduct:
-    """Expected state aggregated at the product-handle level.
+class ExpectedVariant:
+    """Per-variant expected state, keyed by (product_handle, normalized_label)."""
 
-    V0.5 audits default variants only (the one rendered on collection cards
-    and the default pick on a PDP), so we collapse variant-level math into
-    a single sellable flag per product. Per-variant observation is v0.6.
-    """
-
-    product_handle: str
+    variant_gid: str
     product_title: str
-    variant_gid: str  # representative variant (the "single" or default) for dedup keys
+    variant_label: str
     expected: ExpectedState
 
 
-def _sellable_from_levels(variant: dict[str, Any]) -> bool:
+@dataclass
+class ExpectedProduct:
+    """All variants for one product, indexed for observation matching."""
+
+    product_handle: str
+    product_title: str
+    variants: list[ExpectedVariant] = field(default_factory=list)
+
+    def variant_labels(self) -> list[str]:
+        """Labels in Shopify order — passed to the crawler for picker iteration."""
+        return [v.variant_label for v in self.variants]
+
+    def find_by_label(self, label: str | None) -> ExpectedVariant | None:
+        """Case-insensitive match on variant label. If label is None, return
+        the variant most likely to render as the page's default."""
+        if label is None:
+            return self._default_variant()
+        normalized = label.strip().lower()
+        for v in self.variants:
+            if v.variant_label.strip().lower() == normalized:
+                return v
+        # Partial match fallback (e.g. "Santal" vs "Santal Sandalwood / Just One")
+        for v in self.variants:
+            vl = v.variant_label.strip().lower()
+            if normalized in vl or vl in normalized:
+                return v
+        return None
+
+    def _default_variant(self) -> ExpectedVariant | None:
+        """Pick the variant most likely to render by default on the PDP /
+        in a collection card. Heuristic: prefer singles/default titles;
+        otherwise the first variant Shopify returned."""
+        for v in self.variants:
+            t = v.variant_label.lower()
+            if any(x in t for x in ("just one", "just ", "single")) or t in (
+                "default title",
+                "full size",
+            ):
+                return v
+        return self.variants[0] if self.variants else None
+
+
+def _sellable_from_variant(variant: dict[str, Any]) -> bool:
     levels = variant.get("inventoryItem", {}).get("inventoryLevels", [])
     return any(
         lvl["available"] > 0 and lvl["location"].get("shipsInventory", True) for lvl in levels
     )
 
 
-def _pick_default_variant(product: dict[str, Any]) -> dict[str, Any]:
-    """Pick the variant most likely to render as the default on the storefront.
-
-    Heuristic: prefer one whose title matches the singles/default patterns;
-    otherwise fall back to the first variant.
-    """
-    for v in product.get("variants", []):
-        title = (v.get("title") or "").lower()
-        if any(x in title for x in ("just one", "just ", "single")) or title in (
-            "default title",
-            "full size",
-        ):
-            return v
-    return product["variants"][0]
-
-
 def compute_expected_products(
     products: list[dict[str, Any]],
-    set_resolver: SetResolver,
+    set_resolver: SetResolver,  # kept for signature stability; no longer used
 ) -> dict[str, ExpectedProduct]:
-    """Return product_handle -> ExpectedProduct for every auditable product."""
+    """Return product_handle -> ExpectedProduct (all variants).
+
+    Per-variant sellable comes directly from the variant's Shopify
+    inventoryLevels (any shipping location positive). This replaces the
+    earlier singles-only set math, which was too coarse for multi-scent
+    sets where the set product has 9 variants for 9 specific scent combos.
+    """
+    del set_resolver  # reserved for future use (e.g. bottleneck annotations)
     expected_by_handle: dict[str, ExpectedProduct] = {}
-    singles_by_title = {p["title"]: resolve_single(p).qty for p in products}
 
     for product in products:
         title = product["title"]
@@ -112,22 +141,22 @@ def compute_expected_products(
             # No public PDP for these; they live as variants of Daily Skincare Duo.
             continue
 
-        default_variant = _pick_default_variant(product)
-        policy = default_variant.get("inventoryPolicy", "DENY")
-
-        if set_resolver.is_set(title):
-            capacity = set_resolver.capacity(title, singles_by_title)
-            sellable = capacity > 0
-        else:
-            # Product-level sellable: singles math on the default variant
-            sellable = _sellable_from_levels(default_variant)
-
-        expected_by_handle[handle] = ExpectedProduct(
-            product_handle=handle,
-            product_title=title,
-            variant_gid=default_variant["id"],
-            expected=ExpectedState(sellable=sellable, inventory_policy=policy),
-        )
+        ep = ExpectedProduct(product_handle=handle, product_title=title)
+        for variant in product.get("variants", []):
+            policy = variant.get("inventoryPolicy", "DENY")
+            ep.variants.append(
+                ExpectedVariant(
+                    variant_gid=variant["id"],
+                    product_title=title,
+                    variant_label=variant.get("title") or "",
+                    expected=ExpectedState(
+                        sellable=_sellable_from_variant(variant),
+                        inventory_policy=policy,
+                    ),
+                )
+            )
+        if ep.variants:
+            expected_by_handle[handle] = ep
 
     return expected_by_handle
 
@@ -186,21 +215,23 @@ def _flags_for_observation(
     obs: VariantObservation,
     expected_by_handle: dict[str, ExpectedProduct],
 ) -> list[Flag]:
-    """Emit flags for a single (observation) against the product it came from."""
+    """Emit flags for a single observation against its matched Shopify variant."""
     if not obs.product_handle:
-        # Can't attribute this ATC to a product; skip rather than mis-route.
         return []
 
     product = expected_by_handle.get(obs.product_handle)
     if product is None:
-        # ATC for a product that's skipped or not in the active catalog; ignore.
+        return []
+
+    matched = product.find_by_label(obs.variant_label)
+    if matched is None:
         return []
 
     return generate_flags(
-        expected=product.expected,
+        expected=matched.expected,
         observed=obs,
-        variant_gid=product.variant_gid,
-        product_title=product.product_title,
+        variant_gid=matched.variant_gid,
+        product_title=matched.product_title,
     )
 
 
@@ -227,14 +258,16 @@ def _run(cfg: Config) -> None:
         len(urls.other),
     )
 
-    pdp_handles_in_sitemap = {_pdp_handle_from_url(u) for u in urls.pdp}
-    pdp_handles_in_sitemap.discard(None)
-
     all_flags: list[Flag] = []
     with AtcCrawler(headless=True) as crawler:
         for url in urls.all_urls:
+            page_handle = _pdp_handle_from_url(url)
+            variant_labels = None
+            if page_handle and page_handle in expected_by_handle:
+                variant_labels = expected_by_handle[page_handle].variant_labels()
+
             try:
-                observations = crawler.audit_url(url)
+                observations = crawler.audit_url(url, variant_labels=variant_labels)
             except Exception as exc:
                 logger.warning("Crawl failed for %s: %s", url, exc)
                 continue
@@ -245,27 +278,28 @@ def _run(cfg: Config) -> None:
                 if obs.product_handle:
                     observed_handles_here.add(obs.product_handle)
 
-            # PDP URL where the page's own product produced no observation:
-            # the theme is rendering without any visible ATC for it.
-            page_handle = _pdp_handle_from_url(url)
+            # If a PDP rendered but produced ZERO observations for its own
+            # product, the theme is genuinely broken on that page.
             if (
                 page_handle
                 and page_handle in expected_by_handle
                 and page_handle not in observed_handles_here
             ):
                 product = expected_by_handle[page_handle]
-                all_flags.append(
-                    Flag(
-                        flag_type=FlagType.NO_BUY_BUTTON,
-                        product_title=product.product_title,
-                        variant_gid=product.variant_gid,
-                        variant_label=None,
-                        url=url,
-                        expected_sellable=product.expected.sellable,
-                        observed_text="",
-                        state_key=f"{product.variant_gid}::{url}::NO_BUY_BUTTON",
+                default = product.find_by_label(None)
+                if default is not None:
+                    all_flags.append(
+                        Flag(
+                            flag_type=FlagType.NO_BUY_BUTTON,
+                            product_title=product.product_title,
+                            variant_gid=default.variant_gid,
+                            variant_label=None,
+                            url=url,
+                            expected_sellable=default.expected.sellable,
+                            observed_text="",
+                            state_key=f"{default.variant_gid}::{url}::NO_BUY_BUTTON",
+                        )
                     )
-                )
 
     logger.info("Found %d flags", len(all_flags))
 

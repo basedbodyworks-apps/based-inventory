@@ -1,18 +1,22 @@
 """Playwright-driven ATC state detection for Based's theme.
 
-Collects every visible ATC element on a page, tags each with the product
-handle of the nearest ancestor "card" (smallest subtree containing exactly
-one unique /products/{handle} link). Works for PDPs (page-wide card),
-collections (one observation per product card), and landing pages
-(one observation per embedded product block).
+Collects visible ATC observations tagged with the product handle of the
+card that contains them. Supports variant-aware PDP auditing: when the
+caller supplies the list of Shopify variant titles for a PDP, the crawler
+clicks each variant in the picker, waits for the ATC to update, and
+emits one observation per variant. Without variant_labels, only the
+default (as-rendered) state is captured — the right behavior for
+collection cards and landing pages.
 
-Scope notes:
-- Does not currently iterate PDP variant pickers; Based uses custom
-  <a>/<div> cards rather than <input type="radio">, and the default
-  state is what most users see. Variant iteration is deferred to a
-  follow-up once we pick a theme-specific selector for pack cards.
-- Bot-detection mitigations: real desktop User-Agent, throttled
-  concurrency, random jitter between page loads.
+Why variant-aware: Based runs heavy scent-combo sets (9+ variants per
+set: Body Wash scent by Deodorant scent, etc). Many combos are OOS on
+purpose. A set PDP rendered in its default state often lands on an
+OOS combo, which would false-positive a SALES LEAK flag under the
+prior "default variant only" crawl. Iterating the picker lets the
+audit match each Shopify variant to its on-site ATC state.
+
+Bot-detection mitigations: real desktop User-Agent, throttled
+concurrency, random jitter between page loads.
 """
 
 from __future__ import annotations
@@ -33,11 +37,11 @@ _USER_AGENT = (
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
-# JavaScript that walks the DOM and returns one entry per distinct ATC observation.
-# An "ATC" is any element whose direct text content matches the ATC lexicon.
-# We ignore descendant-combined text so that an <a> wrapping multiple spans doesn't
-# double-count; only the leaf node matters. The ancestor walk finds the card
-# boundary by looking for the smallest subtree with exactly one unique product handle.
+# Scan JS: walks the DOM and returns one entry per visible ATC leaf tagged
+# with the product handle of its containing card. The scanner runs after
+# any variant-picker click so the state reflects the currently-selected
+# variant. Dedup is by (product_handle, top_y) since a theme may render
+# redundant ATCs (e.g. sticky + inline).
 _ATC_SCAN_JS = r"""
 () => {
   const ATC_TEXT = /^(ADD TO CART|ADD TO BAG|BUY NOW|SOLD OUT|NOTIFY ME|COMING SOON|PRE[- ]?ORDER)$/i;
@@ -59,18 +63,11 @@ _ATC_SCAN_JS = r"""
     return null;
   }
 
-  // PDP fallback: if the page URL is /products/{handle}, every ATC on the page
-  // that doesn't resolve to a different card belongs to this product.
   const pageHandle = (() => {
     const m = (location.pathname || '').match(/\/products\/([^/]+)/);
     return m ? m[1] : null;
   })();
 
-  // Collect only VISIBLE ATC leaves. Based's theme renders a hidden
-  // <p>SOLD OUT</p> sibling next to the visible <p>ADD TO CART</p>
-  // (or vice-versa) so the UI can swap state without re-rendering.
-  // The hidden one is not a real observation — it's shadow state waiting
-  // to be revealed. Only the visible one represents what customers see.
   const out = [];
   document.querySelectorAll('*').forEach(el => {
     if (!(el.childNodes && el.childNodes.length === 1 && el.childNodes[0].nodeType === 3)) return;
@@ -90,14 +87,30 @@ _ATC_SCAN_JS = r"""
     });
   });
 
-  // Dedupe by (product_handle, top_y) in case a card renders the same
-  // visible ATC twice (e.g. desktop + mobile variants with the same layout).
   const byKey = new Map();
   for (const obs of out) {
     const k = `${obs.product_handle}::${obs.top_y}`;
     if (!byKey.has(k)) byKey.set(k, obs);
   }
   return [...byKey.values()];
+}
+"""
+
+# Click JS: given an exact variant-label string, find a <p> leaf whose
+# trimmed text matches it and click it. Returns true if clicked.
+# Based's variant pickers are <p> tags inside click-handling wrappers;
+# click events bubble up through ancestors, so clicking the leaf works.
+_CLICK_VARIANT_JS = r"""
+(label) => {
+  for (const el of document.querySelectorAll('p')) {
+    if (!(el.childNodes && el.childNodes.length === 1 && el.childNodes[0].nodeType === 3)) continue;
+    if ((el.textContent || '').trim() !== label) continue;
+    const rect = el.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) continue;
+    el.click();
+    return true;
+  }
+  return false;
 }
 """
 
@@ -145,23 +158,45 @@ class AtcCrawler:
         low, high = self.throttle_ms
         time.sleep(random.uniform(low, high) / 1000)
 
-    def audit_url(self, url: str) -> list[VariantObservation]:
-        """Audit a single URL. Returns one VariantObservation per ATC element on the page."""
+    def _observations_from_scan(
+        self,
+        raw: list[dict] | None,
+        url: str,
+        variant_label: str | None,
+    ) -> list[VariantObservation]:
+        return [
+            VariantObservation(
+                url=url,
+                product_handle=entry.get("product_handle"),
+                variant_label=variant_label,
+                present=bool(entry.get("visible")),
+                enabled=bool(entry.get("enabled")),
+                text=entry.get("text", ""),
+            )
+            for entry in (raw or [])
+        ]
+
+    def audit_url(
+        self,
+        url: str,
+        variant_labels: list[str] | None = None,
+    ) -> list[VariantObservation]:
+        """Audit a URL and return one VariantObservation per visible ATC.
+
+        If `variant_labels` is supplied (PDP mode), the crawler clicks each
+        variant in the picker and emits one observation per variant tagged
+        with its label. The pre-click/default state is not emitted in this
+        mode — it's redundant with whichever variant happens to be active
+        by default, and tagging it as "None" would confuse the audit
+        matcher. Without variant_labels (collection / landing mode), only
+        the as-rendered observations are returned.
+        """
         t0 = time.monotonic()
         page = self._new_page()
         needs_lazy_scroll = "/collections/" in url
         try:
-            # wait_until="domcontentloaded": Based's pages load dozens of
-            # images + analytics scripts after DOM parse, so waiting for
-            # 'load' meant ~13s per URL. DOM parse typically finishes in
-            # 1-2s; React hydrates shortly after.
             page.goto(url, wait_until="domcontentloaded", timeout=10_000)
-            # Detect client-side redirects (e.g. hidden PDPs that redirect
-            # to /pages/not-found via Instant Commerce code-block). If we
-            # landed somewhere other than the URL we requested, treat this
-            # as "no observation" so the audit doesn't false-positive a
-            # NO_BUY_BUTTON flag for a page the customer never actually
-            # sees through normal navigation.
+
             final_url = page.url.split("#")[0].split("?")[0]
             requested_url = url.split("#")[0].split("?")[0]
             if final_url != requested_url:
@@ -175,16 +210,9 @@ class AtcCrawler:
                 page.context.close()
                 return []
 
-            # Poll the DOM for any ATC-shaped text to appear, up to 5s.
-            # Fast pages return in under a second; slow-hydrating pages on
-            # Render's shared CPU sometimes need 3-4s. A fixed 2s wait
-            # under-timed ~5 PDPs in the first production run, false-
-            # positiving them as NO_BUY_BUTTON even though the ATC exists
-            # in the source. Polling lets fast pages proceed immediately
-            # while giving slow ones enough headroom.
-            # Page genuinely has no ATC (landing page, blog post, etc.) or
-            # hydration never completed → suppress timeout and proceed.
-            # The scan will return [] — the correct signal either way.
+            # Wait for React to hydrate at least one ATC-shaped element.
+            # Fast pages return in <1s; slow Render CPU allocations need
+            # up to ~4s. Budget 5s then proceed regardless.
             with contextlib.suppress(Exception):
                 page.wait_for_function(
                     """() => {
@@ -205,7 +233,6 @@ class AtcCrawler:
                 )
 
             if needs_lazy_scroll:
-                # Collection grids lazy-load cards as you scroll.
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 page.wait_for_timeout(500)
                 page.evaluate("window.scrollTo(0, 0)")
@@ -216,48 +243,88 @@ class AtcCrawler:
             page.context.close()
             return []
 
+        observations: list[VariantObservation] = []
+
         try:
-            raw = page.evaluate(_ATC_SCAN_JS)
+            if variant_labels:
+                # PDP mode: iterate the variant picker.
+                matched_labels: list[str] = []
+                for label in variant_labels:
+                    try:
+                        clicked = page.evaluate(_CLICK_VARIANT_JS, label)
+                    except Exception as exc:
+                        logger.debug("Variant click failed for %s / %s: %s", url, label, exc)
+                        continue
+                    if not clicked:
+                        # Label doesn't exist as a clickable <p> on this page.
+                        # Could be an archived variant, a label-mismatch, or
+                        # a variant Based hides behind a nested picker. Skip
+                        # silently to avoid flagging a non-existent variant.
+                        continue
+                    matched_labels.append(label)
+                    # Let the ATC re-render in response to the click.
+                    page.wait_for_timeout(600)
+                    raw = page.evaluate(_ATC_SCAN_JS)
+                    observations.extend(
+                        self._observations_from_scan(raw, url=url, variant_label=label)
+                    )
+                if not matched_labels:
+                    # Picker was missing or none of the labels matched:
+                    # fall back to a default-state scan so the audit still
+                    # sees the page.
+                    raw = page.evaluate(_ATC_SCAN_JS)
+                    observations.extend(
+                        self._observations_from_scan(raw, url=url, variant_label=None)
+                    )
+            else:
+                # Collection / landing mode: default-state scan only.
+                raw = page.evaluate(_ATC_SCAN_JS)
+                observations.extend(self._observations_from_scan(raw, url=url, variant_label=None))
         except Exception as exc:
             logger.warning("ATC scan failed on %s: %s", url, exc)
             page.context.close()
             return []
 
-        observations = [
-            VariantObservation(
-                url=url,
-                product_handle=entry.get("product_handle"),
-                variant_label=None,
-                present=bool(entry.get("visible")),
-                enabled=bool(entry.get("enabled")),
-                text=entry.get("text", ""),
-            )
-            for entry in (raw or [])
-        ]
-
         elapsed = time.monotonic() - t0
-        logger.info("Audited %s in %.1fs (%d obs)", url, elapsed, len(observations))
+        logger.info(
+            "Audited %s in %.1fs (%d obs%s)",
+            url,
+            elapsed,
+            len(observations),
+            f", {len(variant_labels)} variants requested" if variant_labels else "",
+        )
 
         self._throttle()
         page.context.close()
         return observations
 
-    def audit_inline_html(self, html: str, url: str) -> list[VariantObservation]:
+    def audit_inline_html(
+        self,
+        html: str,
+        url: str,
+        variant_labels: list[str] | None = None,
+    ) -> list[VariantObservation]:
         """Test helper: set page content directly instead of navigating."""
         page = self._new_page()
         page.set_content(html, wait_until="load")
         try:
+            if variant_labels:
+                obs: list[VariantObservation] = []
+                for label in variant_labels:
+                    try:
+                        clicked = page.evaluate(_CLICK_VARIANT_JS, label)
+                    except Exception:
+                        continue
+                    if not clicked:
+                        continue
+                    page.wait_for_timeout(100)
+                    raw = page.evaluate(_ATC_SCAN_JS)
+                    obs.extend(self._observations_from_scan(raw, url=url, variant_label=label))
+                if not obs:
+                    raw = page.evaluate(_ATC_SCAN_JS)
+                    obs.extend(self._observations_from_scan(raw, url=url, variant_label=None))
+                return obs
             raw = page.evaluate(_ATC_SCAN_JS)
+            return self._observations_from_scan(raw, url=url, variant_label=None)
         finally:
             page.context.close()
-        return [
-            VariantObservation(
-                url=url,
-                product_handle=entry.get("product_handle"),
-                variant_label=None,
-                present=bool(entry.get("visible")),
-                enabled=bool(entry.get("enabled")),
-                text=entry.get("text", ""),
-            )
-            for entry in (raw or [])
-        ]
