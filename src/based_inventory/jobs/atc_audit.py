@@ -318,19 +318,16 @@ def _run(cfg: Config) -> None:
     state.retain_only_atc_flags({f.state_key for f in all_flags})
     for f in all_flags:
         state.mark_atc_flag(f.state_key, now=now_iso)
-    for f in postable_flags:
-        state.mark_atc_flag_posted(f.state_key, now=now_iso)
+    # Note: mark_atc_flag_posted is intentionally deferred until AFTER
+    # the Slack post and only runs when not in dry-run. Otherwise the
+    # parallel-run period would silently consume flags — when DRY_RUN
+    # flips to 0, any flag already marked posted would be skipped.
     state.save(cfg.state_path)
 
-    pending_first_observation = sum(
-        1
-        for f in all_flags
-        if state.is_new_atc_flag(f.state_key) is False  # already persisted
-    )
     logger.info(
-        "Flag status: %d postable, %d pending second observation (run-again to confirm)",
+        "Flag status: %d postable (persisted 2+ runs), %d total flagged this run",
         len(postable_flags),
-        len(all_flags) - pending_first_observation,
+        len(all_flags),
     )
 
     if not postable_flags:
@@ -340,6 +337,11 @@ def _run(cfg: Config) -> None:
     blocks = build_atc_blocks(postable_flags)
     fallback = f"⚡ ATC Audit: {len(postable_flags)} new disagreement(s)"
     slack.post_message(fallback, blocks)
+
+    if not cfg.dry_run:
+        for f in postable_flags:
+            state.mark_atc_flag_posted(f.state_key, now=now_iso)
+        state.save(cfg.state_path)
 
 
 def main() -> None:
