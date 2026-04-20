@@ -163,6 +163,25 @@ class AtcCrawler:
                 page.wait_for_timeout(750)
                 page.evaluate("window.scrollTo(0, 0)")
                 page.wait_for_timeout(250)
+
+            # Detect client-side redirects (e.g. hidden PDPs that redirect
+            # to /pages/not-found via Instant Commerce code-block). If we
+            # landed somewhere other than the URL we requested, treat this
+            # as "no observation" so the audit doesn't false-positive a
+            # NO_BUY_BUTTON flag for a page the customer never actually
+            # sees through normal navigation.
+            final_url = page.url.split("#")[0].split("?")[0]
+            requested_url = url.split("#")[0].split("?")[0]
+            if final_url != requested_url:
+                elapsed = time.monotonic() - t0
+                logger.info(
+                    "Skipped %s (client-side redirect to %s) in %.1fs",
+                    url,
+                    final_url,
+                    elapsed,
+                )
+                page.context.close()
+                return []
         except Exception as exc:
             elapsed = time.monotonic() - t0
             logger.warning("Failed to load %s after %.1fs: %s", url, elapsed, exc)
