@@ -17,6 +17,7 @@ Scope notes:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import random
 import time
@@ -153,17 +154,8 @@ class AtcCrawler:
             # wait_until="domcontentloaded": Based's pages load dozens of
             # images + analytics scripts after DOM parse, so waiting for
             # 'load' meant ~13s per URL. DOM parse typically finishes in
-            # 1-2s; React hydrates shortly after. We then wait ~2s for
-            # product cards to mount before scanning.
+            # 1-2s; React hydrates shortly after.
             page.goto(url, wait_until="domcontentloaded", timeout=10_000)
-            page.wait_for_timeout(2000)
-            if needs_lazy_scroll:
-                # Collection grids lazy-load cards as you scroll.
-                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
-                page.wait_for_timeout(750)
-                page.evaluate("window.scrollTo(0, 0)")
-                page.wait_for_timeout(250)
-
             # Detect client-side redirects (e.g. hidden PDPs that redirect
             # to /pages/not-found via Instant Commerce code-block). If we
             # landed somewhere other than the URL we requested, treat this
@@ -182,6 +174,42 @@ class AtcCrawler:
                 )
                 page.context.close()
                 return []
+
+            # Poll the DOM for any ATC-shaped text to appear, up to 5s.
+            # Fast pages return in under a second; slow-hydrating pages on
+            # Render's shared CPU sometimes need 3-4s. A fixed 2s wait
+            # under-timed ~5 PDPs in the first production run, false-
+            # positiving them as NO_BUY_BUTTON even though the ATC exists
+            # in the source. Polling lets fast pages proceed immediately
+            # while giving slow ones enough headroom.
+            # Page genuinely has no ATC (landing page, blog post, etc.) or
+            # hydration never completed → suppress timeout and proceed.
+            # The scan will return [] — the correct signal either way.
+            with contextlib.suppress(Exception):
+                page.wait_for_function(
+                    """() => {
+                        const re = /^(ADD TO CART|ADD TO BAG|BUY NOW|SOLD OUT|NOTIFY ME|COMING SOON|PRE[- ]?ORDER)$/i;
+                        for (const el of document.querySelectorAll('*')) {
+                            if (el.childNodes && el.childNodes.length === 1 &&
+                                el.childNodes[0].nodeType === 3) {
+                                const t = (el.textContent || '').trim();
+                                if (re.test(t)) {
+                                    const r = el.getBoundingClientRect();
+                                    if (r.width > 0 && r.height > 0) return true;
+                                }
+                            }
+                        }
+                        return false;
+                    }""",
+                    timeout=5_000,
+                )
+
+            if needs_lazy_scroll:
+                # Collection grids lazy-load cards as you scroll.
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                page.wait_for_timeout(500)
+                page.evaluate("window.scrollTo(0, 0)")
+                page.wait_for_timeout(250)
         except Exception as exc:
             elapsed = time.monotonic() - t0
             logger.warning("Failed to load %s after %.1fs: %s", url, elapsed, exc)
