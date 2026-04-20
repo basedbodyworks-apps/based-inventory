@@ -221,26 +221,59 @@ class AtcCrawler:
                 page.context.close()
                 return []
 
-            # Wait for React to hydrate at least one ATC-shaped element.
-            # Fast pages return in <1s; slow Render CPU allocations need
-            # up to ~4s. Budget 5s then proceed regardless.
+            # Wait for React to hydrate the PAGE'S OWN ATC, not just any
+            # ATC-shaped text. Previously we waited for any visible leaf
+            # matching the ATC lexicon, which returned early on pages that
+            # render a promo banner like "Buy Now" or a cross-sell ATC
+            # before the main product's ATC mounted. The scan then ran
+            # against a stale DOM and missed the product's own ATC,
+            # triggering false NO_BUY_BUTTON flags on live PDPs.
+            #
+            # For PDPs we require an ATC whose containing-card walk
+            # resolves to the URL's own handle (or none, i.e. nothing else
+            # claimed it). For non-PDPs (collections, landing pages), any
+            # ATC suffices.
+            page_handle = None
+            if "/products/" in url:
+                tail = url.split("/products/", 1)[1]
+                page_handle = tail.split("/")[0].split("?")[0] or None
             with contextlib.suppress(Exception):
                 page.wait_for_function(
-                    """() => {
+                    """(pageHandle) => {
                         const re = /^(ADD TO CART|ADD TO BAG|BUY NOW|SOLD OUT|NOTIFY ME|COMING SOON|PRE[- ]?ORDER)$/i;
-                        for (const el of document.querySelectorAll('*')) {
-                            if (el.childNodes && el.childNodes.length === 1 &&
-                                el.childNodes[0].nodeType === 3) {
-                                const t = (el.textContent || '').trim();
-                                if (re.test(t)) {
-                                    const r = el.getBoundingClientRect();
-                                    if (r.width > 0 && r.height > 0) return true;
-                                }
+                        function cardHandle(leaf) {
+                          let cur = leaf.parentElement;
+                          for (let i = 0; i < 20 && cur; i++) {
+                            const links = cur.querySelectorAll('a[href*="/products/"]');
+                            const handles = new Set();
+                            for (const a of links) {
+                              const h = (a.getAttribute('href') || '').split('?')[0];
+                              const m = h.match(/\/products\/([^/]+)/);
+                              if (m) handles.add(m[1]);
                             }
+                            if (handles.size === 1) return [...handles][0];
+                            cur = cur.parentElement;
+                          }
+                          return null;
+                        }
+                        for (const el of document.querySelectorAll('*')) {
+                          if (!(el.childNodes && el.childNodes.length === 1 &&
+                                el.childNodes[0].nodeType === 3)) continue;
+                          const t = (el.textContent || '').trim();
+                          if (!re.test(t)) continue;
+                          const r = el.getBoundingClientRect();
+                          if (!(r.width > 0 && r.height > 0)) continue;
+                          if (!pageHandle) return true;
+                          // For PDPs, only count ATCs that are clearly for
+                          // the page's own product (pageHandle match or no
+                          // card-level competitor claiming it).
+                          const owner = cardHandle(el);
+                          if (owner === null || owner === pageHandle) return true;
                         }
                         return false;
                     }""",
-                    timeout=5_000,
+                    arg=page_handle,
+                    timeout=8_000,
                 )
 
             if needs_lazy_scroll:
