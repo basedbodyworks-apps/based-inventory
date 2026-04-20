@@ -132,13 +132,29 @@ class AlertState:
 
     # ATC flag API
     def is_new_atc_flag(self, key: str) -> bool:
+        """True if the flag has never been recorded in any prior run."""
         return key not in self.atc_flags
+
+    def should_post_atc_flag(self, key: str) -> bool:
+        """True if the flag was observed in a prior run (persisted) AND has
+        not yet been posted to Slack. This requires 2+ consecutive
+        observations before posting — single-run crawler hydration blips
+        (the dominant source of false positives) never get through."""
+        entry = self.atc_flags.get(key)
+        if entry is None:
+            return False
+        return not entry.get("posted_at")
 
     def mark_atc_flag(self, key: str, now: str) -> None:
         if key in self.atc_flags:
             self.atc_flags[key]["last_seen_at"] = now
         else:
             self.atc_flags[key] = {"first_seen_at": now, "last_seen_at": now}
+
+    def mark_atc_flag_posted(self, key: str, now: str) -> None:
+        """Record that this flag has been posted to Slack; prevents re-posting."""
+        if key in self.atc_flags:
+            self.atc_flags[key]["posted_at"] = now
 
     def retain_only_atc_flags(self, keep_keys: set[str]) -> None:
         """Drop ATC flags not in keep_keys (used after a full audit run)."""

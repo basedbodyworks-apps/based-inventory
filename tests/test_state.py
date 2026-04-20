@@ -87,6 +87,44 @@ def test_load_wrong_value_types_returns_empty(tmp_path: Path):
     assert state.atc_flags == {}
 
 
+def test_should_post_atc_flag_requires_prior_observation(tmp_path: Path):
+    """A flag must have been observed in a prior run (persisted) before
+    it's eligible to post. First-run observations are silently recorded."""
+    state = AlertState.load(tmp_path / "s.json")
+    key = "gid://shopify/ProductVariant/1::/products/x::SALES_LEAK"
+
+    # Run 1: first observation. Not postable yet.
+    assert state.should_post_atc_flag(key) is False
+    state.mark_atc_flag(key, now="2026-04-20T06:00:00Z")
+    assert state.should_post_atc_flag(key) is True  # persisted, not yet posted
+
+    # Mark it posted (as audit does after building the Slack blocks).
+    state.mark_atc_flag_posted(key, now="2026-04-20T06:01:00Z")
+    assert state.should_post_atc_flag(key) is False  # already posted, don't re-post
+
+
+def test_should_post_atc_flag_ignores_single_run_intermittents(tmp_path: Path):
+    """A flag that appears only in run 1 and not in run 2 should never
+    post — retain_only_atc_flags drops it between runs."""
+    state = AlertState.load(tmp_path / "s.json")
+    key = "gid://shopify/ProductVariant/1::/products/x::NO_BUY_BUTTON"
+
+    # Run 1: new observation, recorded but not postable.
+    state.mark_atc_flag(key, now="2026-04-20T06:00:00Z")
+    # End of run 1: no post emitted (should_post_atc_flag was False before
+    # mark — we check before updating state in the audit flow).
+    state.save(tmp_path / "s.json")
+
+    # Run 2: flag NOT observed. retain_only_atc_flags prunes it.
+    state2 = AlertState.load(tmp_path / "s.json")
+    state2.retain_only_atc_flags(set())
+    state2.save(tmp_path / "s.json")
+
+    # Run 3: flag re-appears (unrelated timing blip). Treated as brand new.
+    state3 = AlertState.load(tmp_path / "s.json")
+    assert state3.should_post_atc_flag(key) is False
+
+
 def test_clear_atc_flags_not_in_set(tmp_path: Path):
     state = AlertState.load(tmp_path / "s.json")
     state.mark_atc_flag("k1", now="2026-04-15T06:00:00Z")

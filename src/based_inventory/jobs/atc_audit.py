@@ -304,21 +304,41 @@ def _run(cfg: Config) -> None:
     logger.info("Found %d flags", len(all_flags))
 
     now_iso = datetime.now(timezone.utc).isoformat()  # noqa: UP017
-    new_flags = _dedupe_flags_by_state_key(
-        [f for f in all_flags if state.is_new_atc_flag(f.state_key)]
+
+    # Post only flags that were also observed in the previous run. New
+    # flags get recorded but not posted — this suppresses single-run
+    # hydration-timing false positives, which have been the dominant
+    # source of noise during the parallel-run period. A genuinely
+    # persistent issue gets posted on its second consecutive observation
+    # (max 1 day delay given the daily cron cadence).
+    postable_flags = _dedupe_flags_by_state_key(
+        [f for f in all_flags if state.should_post_atc_flag(f.state_key)]
     )
 
     state.retain_only_atc_flags({f.state_key for f in all_flags})
     for f in all_flags:
         state.mark_atc_flag(f.state_key, now=now_iso)
+    for f in postable_flags:
+        state.mark_atc_flag_posted(f.state_key, now=now_iso)
     state.save(cfg.state_path)
 
-    if not new_flags:
-        logger.info("No new flags to post")
+    pending_first_observation = sum(
+        1
+        for f in all_flags
+        if state.is_new_atc_flag(f.state_key) is False  # already persisted
+    )
+    logger.info(
+        "Flag status: %d postable, %d pending second observation (run-again to confirm)",
+        len(postable_flags),
+        len(all_flags) - pending_first_observation,
+    )
+
+    if not postable_flags:
+        logger.info("No flags have persisted 2 consecutive runs; nothing to post")
         return
 
-    blocks = build_atc_blocks(new_flags)
-    fallback = f"⚡ ATC Audit: {len(new_flags)} new disagreement(s)"
+    blocks = build_atc_blocks(postable_flags)
+    fallback = f"⚡ ATC Audit: {len(postable_flags)} new disagreement(s)"
     slack.post_message(fallback, blocks)
 
 
