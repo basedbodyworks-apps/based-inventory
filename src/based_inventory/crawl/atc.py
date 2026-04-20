@@ -150,12 +150,13 @@ class AtcCrawler:
         page = self._new_page()
         needs_lazy_scroll = "/collections/" in url
         try:
-            # wait_until="load" instead of "networkidle": Based's pages have
-            # long-tail analytics and chat-widget pings that prevent true
-            # network idle. "load" fires when window.load event fires;
-            # after that we give React ~1s to hydrate product cards.
-            page.goto(url, wait_until="load", timeout=12_000)
-            page.wait_for_timeout(1000)
+            # wait_until="domcontentloaded": Based's pages load dozens of
+            # images + analytics scripts after DOM parse, so waiting for
+            # 'load' meant ~13s per URL. DOM parse typically finishes in
+            # 1-2s; React hydrates shortly after. We then wait ~2s for
+            # product cards to mount before scanning.
+            page.goto(url, wait_until="domcontentloaded", timeout=10_000)
+            page.wait_for_timeout(2000)
             if needs_lazy_scroll:
                 # Collection grids lazy-load cards as you scroll.
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
