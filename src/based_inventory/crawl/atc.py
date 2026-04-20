@@ -108,19 +108,18 @@ _ATC_SCAN_JS = r"""
 }
 """
 
-# Click JS: given an exact variant-label string, find a <p> leaf whose
-# trimmed text matches it and click it. Returns true if clicked.
-# Based's variant pickers are <p> tags inside click-handling wrappers;
-# click events bubble up through ancestors, so clicking the leaf works.
-_CLICK_VARIANT_JS = r"""
+# Finder JS: return true if a visible <p> leaf exists with exact text
+# matching the given label. The crawler uses this to decide whether to
+# invoke Playwright's native locator click (which synthesizes real mouse
+# events and reliably triggers React onClick handlers — JS element.click()
+# sometimes no-ops in the Based theme, producing state-stuck flags).
+_HAS_VARIANT_JS = r"""
 (label) => {
   for (const el of document.querySelectorAll('p')) {
     if (!(el.childNodes && el.childNodes.length === 1 && el.childNodes[0].nodeType === 3)) continue;
     if ((el.textContent || '').trim() !== label) continue;
     const rect = el.getBoundingClientRect();
-    if (!(rect.width > 0 && rect.height > 0)) continue;
-    el.click();
-    return true;
+    if (rect.width > 0 && rect.height > 0) return true;
   }
   return false;
 }
@@ -259,23 +258,40 @@ class AtcCrawler:
 
         try:
             if variant_labels:
-                # PDP mode: iterate the variant picker.
+                # PDP mode: iterate the variant picker via Playwright's
+                # native click (mouse events), not el.click() via evaluate.
+                # The JS-level click sometimes no-ops in this theme,
+                # leaving the ATC state stuck on a previously-selected
+                # variant — which would produce spurious SALES LEAK /
+                # OVERSELL RISK flags as each subsequent variant scan
+                # reads the stale state.
                 matched_labels: list[str] = []
                 for label in variant_labels:
                     try:
-                        clicked = page.evaluate(_CLICK_VARIANT_JS, label)
+                        present = page.evaluate(_HAS_VARIANT_JS, label)
+                    except Exception as exc:
+                        logger.debug("Variant lookup failed for %s / %s: %s", url, label, exc)
+                        continue
+                    if not present:
+                        # Variant label isn't visible on this PDP — could be
+                        # archived, hidden behind a nested picker, or have a
+                        # label mismatch between Shopify and the theme. Skip
+                        # rather than flagging a variant that can't be
+                        # observed.
+                        continue
+                    try:
+                        # `get_by_text(label, exact=True).first` finds the
+                        # matching <p> leaf. locator.click() scrolls into
+                        # view, waits for the element to be actionable, and
+                        # fires real MouseEvent sequence (mousemove +
+                        # mousedown + mouseup), which triggers React's
+                        # synthetic event system reliably.
+                        page.get_by_text(label, exact=True).first.click(timeout=2_000)
                     except Exception as exc:
                         logger.debug("Variant click failed for %s / %s: %s", url, label, exc)
                         continue
-                    if not clicked:
-                        # Label doesn't exist as a clickable <p> on this page.
-                        # Could be an archived variant, a label-mismatch, or
-                        # a variant Based hides behind a nested picker. Skip
-                        # silently to avoid flagging a non-existent variant.
-                        continue
                     matched_labels.append(label)
-                    # Let the ATC re-render in response to the click.
-                    page.wait_for_timeout(600)
+                    page.wait_for_timeout(800)
                     raw = page.evaluate(_ATC_SCAN_JS)
                     observations.extend(
                         self._observations_from_scan(raw, url=url, variant_label=label)
@@ -324,10 +340,14 @@ class AtcCrawler:
                 obs: list[VariantObservation] = []
                 for label in variant_labels:
                     try:
-                        clicked = page.evaluate(_CLICK_VARIANT_JS, label)
+                        present = page.evaluate(_HAS_VARIANT_JS, label)
                     except Exception:
                         continue
-                    if not clicked:
+                    if not present:
+                        continue
+                    try:
+                        page.get_by_text(label, exact=True).first.click(timeout=2_000)
+                    except Exception:
                         continue
                     page.wait_for_timeout(100)
                     raw = page.evaluate(_ATC_SCAN_JS)
