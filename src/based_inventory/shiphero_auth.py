@@ -42,15 +42,12 @@ def refresh_access_token(refresh_token: str, timeout: int = 15) -> str:
     )
     if response.status_code != 200:
         raise RuntimeError(
-            f"ShipHero token refresh failed: HTTP {response.status_code} "
-            f"{response.text[:200]}"
+            f"ShipHero token refresh failed: HTTP {response.status_code} " f"{response.text[:200]}"
         )
     payload = response.json()
     new_token = payload.get("access_token")
     if not new_token:
-        raise RuntimeError(
-            f"ShipHero refresh response missing access_token: {payload}"
-        )
+        raise RuntimeError(f"ShipHero refresh response missing access_token: {payload}")
     return new_token
 
 

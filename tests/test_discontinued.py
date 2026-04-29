@@ -47,11 +47,15 @@ def test_heuristic_does_not_skip_real_products() -> None:
 
 def test_manual_discontinued_list_skips(tmp_path: Path) -> None:
     p = tmp_path / "discontinued.json"
-    p.write_text(json.dumps({
-        "skus": [
-            {"sku": "TLLW-1", "name": "Tallow Moisturizer", "reason": "EOL"},
-        ]
-    }))
+    p.write_text(
+        json.dumps(
+            {
+                "skus": [
+                    {"sku": "TLLW-1", "name": "Tallow Moisturizer", "reason": "EOL"},
+                ]
+            }
+        )
+    )
     f = DiscontinuedFilter(p)
     assert f.should_skip("TLLW-1", "Tallow Moisturizer")
     # Real product not in the list passes through.

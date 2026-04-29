@@ -124,7 +124,9 @@ def _format_channel_mix(counts: dict[str, int]) -> str | None:
     return " / ".join(pieces)
 
 
-def build_blocks(alerts: list[Alert], channel_mix_summary: str | None = None) -> list[dict[str, Any]]:
+def build_blocks(
+    alerts: list[Alert], channel_mix_summary: str | None = None
+) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = [
         header("⚡ Inventory Alert"),
         divider(),
@@ -217,7 +219,8 @@ def _run(cfg: Config) -> None:
     # standalone accessories) get added to a future tracked-skus.json
     # if needed; not in scope for v0.
     candidates = [
-        s for s in stock
+        s
+        for s in stock
         if not s.is_kit
         and s.sku not in registry.bundle_skus
         and s.sku in component_skus
@@ -257,9 +260,7 @@ def _run(cfg: Config) -> None:
     # alert annotates outstanding inbound qty + most-recent po_date (and
     # ship_date if set).
     try:
-        inbound = client.fetch_inbound_outstanding_by_sku(
-            po_date_from_iso="2025-01-01T00:00:00"
-        )
+        inbound = client.fetch_inbound_outstanding_by_sku(po_date_from_iso="2025-01-01T00:00:00")
     except RuntimeError:
         inbound = {}
 

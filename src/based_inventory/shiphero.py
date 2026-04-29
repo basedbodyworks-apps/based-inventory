@@ -42,6 +42,7 @@ def _midpoint_iso(from_iso: str, to_iso: str) -> str | None:
     mid = f + (t - f) / 2
     return mid.strftime("%Y-%m-%dT%H:%M:%S")
 
+
 MERCHDROP_WAREHOUSE_ID = "V2FyZWhvdXNlOjExNzY2MQ=="
 
 _ORDER_SHIPPED_REASON = re.compile(r"order .*shipped", re.IGNORECASE)
@@ -75,7 +76,9 @@ class KitDefinition:
 
 
 class ShipHeroClient:
-    def __init__(self, token: str, api_url: str = "https://public-api.shiphero.com/graphql") -> None:
+    def __init__(
+        self, token: str, api_url: str = "https://public-api.shiphero.com/graphql"
+    ) -> None:
         self.endpoint = api_url
         self.headers = {
             "Content-Type": "application/json",
@@ -97,7 +100,7 @@ class ShipHeroClient:
             except (requests.ConnectionError, requests.Timeout) as e:
                 last_exc = e
                 if attempt < retries:
-                    time.sleep(min(2 ** attempt * 2, 30))
+                    time.sleep(min(2**attempt * 2, 30))
                     continue
                 raise RuntimeError(f"ShipHero network error after {retries} retries: {e}") from e
             payload = r.json() if r.content else {}
@@ -294,8 +297,7 @@ class ShipHeroClient:
             payload = self._execute(query, {"updated_from": uf, "updated_to": ut})
             edges = payload["data"]["products"]["data"]["edges"]
             saturated = (
-                len(edges) >= 100
-                and payload["data"]["products"]["data"]["pageInfo"]["hasNextPage"]
+                len(edges) >= 100 and payload["data"]["products"]["data"]["pageInfo"]["hasNextPage"]
             )
             return [e["node"] for e in edges], saturated
 
@@ -312,9 +314,7 @@ class ShipHeroClient:
                 if n["sku"] in seen:
                     continue
                 seen.add(n["sku"])
-                comps = tuple(
-                    (c["sku"], c["quantity"]) for c in (n.get("kit_components") or [])
-                )
+                comps = tuple((c["sku"], c["quantity"]) for c in (n.get("kit_components") or []))
                 all_kits.append(
                     KitDefinition(
                         sku=n["sku"],
@@ -447,18 +447,18 @@ class ShipHeroClient:
         except ValueError:
             req_start = None
         now_dt = datetime.utcnow()
-        requested_window_days = max(
-            (now_dt - req_start).total_seconds() / 86400.0, 0.0
-        ) if req_start else 7.0
+        requested_window_days = (
+            max((now_dt - req_start).total_seconds() / 86400.0, 0.0) if req_start else 7.0
+        )
 
         if saturated and first_event_dt and last_event_dt:
             try:
-                first_dt = datetime.fromisoformat(
-                    first_event_dt.replace("Z", "+00:00")
-                ).replace(tzinfo=None)
-                last_dt = datetime.fromisoformat(
-                    last_event_dt.replace("Z", "+00:00")
-                ).replace(tzinfo=None)
+                first_dt = datetime.fromisoformat(first_event_dt.replace("Z", "+00:00")).replace(
+                    tzinfo=None
+                )
+                last_dt = datetime.fromisoformat(last_event_dt.replace("Z", "+00:00")).replace(
+                    tzinfo=None
+                )
                 span_days = max((last_dt - first_dt).total_seconds() / 86400.0, 1 / 24.0)
                 effective = min(span_days, requested_window_days)
                 return depleted, effective
@@ -534,8 +534,7 @@ class ShipHeroClient:
                 shop = n.get("shop_name") or "(unknown)"
                 counts[shop] = counts.get(shop, 0) + 1
             saturated = (
-                len(edges) >= 100
-                and payload["data"]["orders"]["data"]["pageInfo"]["hasNextPage"]
+                len(edges) >= 100 and payload["data"]["orders"]["data"]["pageInfo"]["hasNextPage"]
             )
             if saturated:
                 mid = _midpoint_iso(uf, ut)
@@ -709,7 +708,9 @@ class ShipHeroClient:
                 )
                 entry["outstanding"] += outstanding
                 entry["po_count"] += 1
-                if po_date and (entry["latest_po_date"] is None or po_date > entry["latest_po_date"]):
+                if po_date and (
+                    entry["latest_po_date"] is None or po_date > entry["latest_po_date"]
+                ):
                     entry["latest_po_date"] = po_date
                     entry["latest_po_number"] = po_number
                 if ship_date and (

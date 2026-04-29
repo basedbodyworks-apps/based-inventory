@@ -58,14 +58,13 @@ def test_snapshot_renders_not_found_when_sku_missing() -> None:
         ),
     ]
     blocks = build_snapshot_blocks(sections, date_str="Apr 15, 2026")
-    body_text = "\n".join(
-        b["text"]["text"] for b in blocks if b["type"] == "section"
-    )
+    body_text = "\n".join(b["text"]["text"] for b in blocks if b["type"] == "section")
     assert "not found" in body_text
 
 
 def test_snapshot_emoji_tier_for_oversold() -> None:
     from based_inventory.jobs.weekly_snapshot import _emoji
+
     assert _emoji(-53) == "⛔"
     assert _emoji(50) == "🚨"
     assert _emoji(500) == "🔴"

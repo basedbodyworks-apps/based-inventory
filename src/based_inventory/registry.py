@@ -38,6 +38,7 @@ class BundleEntry:
     not be matched to any warehouse_product, that component appears as
     None and the bundle is marked `partially_resolved=True`.
     """
+
     bundle_sku: str
     bundle_name: str
     source: str  # "shiphero" or "set-components"
@@ -49,6 +50,7 @@ class BundleEntry:
 @dataclass(frozen=True)
 class BundleRegistry:
     """Indexed view over all known bundles + which SKUs to distrust."""
+
     bundles: tuple[BundleEntry, ...]
     bundle_skus: frozenset[str]
     # Convenience: SKU -> BundleEntry (for the most-specific entry if multiple sources match)
@@ -140,7 +142,8 @@ def build_registry(
     for kit in kits:
         bundle_skus.add(kit.sku)
         components_resolved = tuple(
-            (sku, sku, qty) for sku, qty in kit.components  # ShipHero already gives us SKUs
+            (sku, sku, qty)
+            for sku, qty in kit.components  # ShipHero already gives us SKUs
         )
         bundles.append(
             BundleEntry(

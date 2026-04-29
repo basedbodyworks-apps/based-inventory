@@ -100,11 +100,14 @@ def test_build_blocks_omits_inbound_when_zero() -> None:
 
 def test_format_channel_mix_renders_known_channel_labels() -> None:
     from based_inventory.jobs.quantity_alerts import _format_channel_mix
-    out = _format_channel_mix({
-        "BASED": 70,
-        "basedbodyworks.myshopify.com": 20,
-        "Based Bodyworks Amazon": 10,
-    })
+
+    out = _format_channel_mix(
+        {
+            "BASED": 70,
+            "basedbodyworks.myshopify.com": 20,
+            "Based Bodyworks Amazon": 10,
+        }
+    )
     assert out is not None
     assert "TTS 70%" in out
     assert "Shopify 20%" in out
@@ -113,6 +116,7 @@ def test_format_channel_mix_renders_known_channel_labels() -> None:
 
 def test_format_channel_mix_returns_none_for_empty() -> None:
     from based_inventory.jobs.quantity_alerts import _format_channel_mix
+
     assert _format_channel_mix({}) is None
 
 
@@ -143,9 +147,7 @@ def test_build_blocks_renders_critical_alert() -> None:
 
 
 def test_build_blocks_oversold_includes_owe_message() -> None:
-    blocks = build_blocks(
-        [_alert(label=OVERSOLD_LABEL, tier=OVERSOLD_TIER, on_hand=-41)]
-    )
+    blocks = build_blocks([_alert(label=OVERSOLD_LABEL, tier=OVERSOLD_TIER, on_hand=-41)])
     text = blocks[2]["text"]["text"]
     assert "OVERSOLD" in text
     assert "-41" in text
@@ -153,8 +155,6 @@ def test_build_blocks_oversold_includes_owe_message() -> None:
 
 
 def test_build_blocks_no_velocity_falls_back_to_no_recent_depletion() -> None:
-    blocks = build_blocks(
-        [_alert(velocity_per_day=0.0, weeks_of_cover=99999.0, on_hand=50)]
-    )
+    blocks = build_blocks([_alert(velocity_per_day=0.0, weeks_of_cover=99999.0, on_hand=50)])
     text = blocks[2]["text"]["text"]
     assert "no recent depletion observed" in text

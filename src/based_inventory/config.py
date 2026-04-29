@@ -46,9 +46,7 @@ class Config:
             shopify_api_version=optional("SHOPIFY_API_VERSION", "2026-01") or "2026-01",
             shiphero_access_token=optional("SHIPHERO_ACCESS_TOKEN"),
             shiphero_refresh_token=optional("SHIPHERO_REFRESH_TOKEN"),
-            shiphero_api_url=optional(
-                "SHIPHERO_API_URL", "https://public-api.shiphero.com/graphql"
-            )
+            shiphero_api_url=optional("SHIPHERO_API_URL", "https://public-api.shiphero.com/graphql")
             or "https://public-api.shiphero.com/graphql",
             slack_bot_token=required("SLACK_BOT_TOKEN"),
             slack_channel=required("SLACK_CHANNEL"),

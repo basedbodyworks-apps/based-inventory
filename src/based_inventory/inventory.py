@@ -50,7 +50,7 @@ class SkuCover:
     velocity_per_day: float
     weeks_of_cover: float
     tier: str
-    is_kit: bool          # ShipHero kit=true flag.
+    is_kit: bool  # ShipHero kit=true flag.
     trusted_inventory: bool  # False if this SKU is in the BundleRegistry; on_hand is fabricated.
 
 

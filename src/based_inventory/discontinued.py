@@ -102,9 +102,7 @@ def _heuristic_skip(product_name: str, sku: str) -> bool:
     for pat in _TEST_PATTERNS:
         if pat in padded:
             return True
-    return any(
-        sku_lower.endswith(suffix.lower()) for suffix in _SKU_SUFFIXES
-    )
+    return any(sku_lower.endswith(suffix.lower()) for suffix in _SKU_SUFFIXES)
 
 
 def _load_discontinued(path: Path) -> dict[str, dict[str, str]]:
