@@ -47,7 +47,7 @@ services:
       - key: ENV
         value: prod
       - key: DRY_RUN
-        value: "1"
+        value: "0"
       - key: LOG_LEVEL
         value: INFO
 
@@ -100,7 +100,7 @@ services:
       - key: ENV
         value: prod
       - key: DRY_RUN
-        value: "1"
+        value: "0"
       - key: LOG_LEVEL
         value: INFO
 
@@ -147,6 +147,6 @@ services:
       - key: ENV
         value: prod
       - key: DRY_RUN
-        value: "1"
+        value: "0"
       - key: LOG_LEVEL
         value: INFO
