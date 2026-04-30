@@ -231,7 +231,13 @@ class AtcCrawler:
         page = self._new_page()
         needs_lazy_scroll = "/collections/" in url
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=10_000)
+            # 20s page-load timeout. Slow Instant.so PDPs (notably the
+            # duo / kit pages — shower-duo-cck, definition-hold-duo etc.)
+            # consistently breach 10s under prod conditions and then bail
+            # before the ATC ever mounts, producing false NO_BUY_BUTTON
+            # flags. Avi confirmed live that those pages do have working
+            # buy buttons; the bot just wasn't patient enough.
+            page.goto(url, wait_until="domcontentloaded", timeout=20_000)
 
             final_url = page.url.split("#")[0].split("?")[0]
             requested_url = url.split("#")[0].split("?")[0]
@@ -302,7 +308,10 @@ class AtcCrawler:
                         return false;
                     }""",
                     arg=page_handle,
-                    timeout=8_000,
+                    # Paired with the 20s page-load bump above. If the
+                    # page itself takes 12-15s to settle on prod, ATC mount
+                    # often follows another 1-2s after that.
+                    timeout=12_000,
                 )
 
             if needs_lazy_scroll:
