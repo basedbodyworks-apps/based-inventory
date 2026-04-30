@@ -142,13 +142,24 @@ def compute_expected_products(
             continue
 
         ep = ExpectedProduct(product_handle=handle, product_title=title)
+        # Shopify's variant.title concatenates the product title with each
+        # option value, e.g. "Body Care Set - Santal Sandalwood + Bergamot
+        # Vanilla". Based's PDPs render only the option-value tail in the
+        # variant picker (e.g. "Santal Sandalwood + Bergamot Vanilla"), so an
+        # exact-match DOM lookup against the raw variant title fails for
+        # every variant on every multi-option PDP. Strip the leading
+        # "{title} - " prefix so the crawler's _HAS_VARIANT_JS finds the
+        # picker leaves it actually renders.
+        prefix = f"{title} - "
         for variant in product.get("variants", []):
             policy = variant.get("inventoryPolicy", "DENY")
+            raw_label = variant.get("title") or ""
+            label = raw_label[len(prefix) :] if raw_label.startswith(prefix) else raw_label
             ep.variants.append(
                 ExpectedVariant(
                     variant_gid=variant["id"],
                     product_title=title,
-                    variant_label=variant.get("title") or "",
+                    variant_label=label,
                     expected=ExpectedState(
                         sellable=_sellable_from_variant(variant),
                         inventory_policy=policy,

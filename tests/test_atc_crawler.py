@@ -12,6 +12,32 @@ def _with_crawler(html: str, url: str, variant_labels=None):
         return crawler.audit_inline_html(html, url=url, variant_labels=variant_labels)
 
 
+def test_pdp_observation_falls_back_to_url_handle_when_card_has_no_link():
+    """Set / bundle PDPs render the SOLD OUT button inside markup that
+    has no /products/ anchor in any ancestor, so the cardHandle resolver
+    returns null. Without a fallback, downstream code sees 'no observation
+    matched the page handle' and emits a spurious NO_BUY_BUTTON flag with
+    Observed: '' (which was 19/19 of the noise in the 2026-04-30 run).
+    The crawler must attribute fallback observations to the URL's handle.
+    """
+    html = """
+    <html><body>
+      <main>
+        <section>
+          <p>SOLD OUT</p>
+        </section>
+      </main>
+    </body></html>
+    """
+    observations = _with_crawler(html, url="https://x.invalid/products/body-care-set")
+    assert len(observations) == 1
+    obs = observations[0]
+    # cardHandle would have returned None (no /products/ anchor anywhere
+    # in the ancestry), but the URL fallback fills in the page handle.
+    assert obs.product_handle == "body-care-set"
+    assert obs.text.upper() == "SOLD OUT"
+
+
 def test_pdp_visible_add_to_cart_is_observed():
     html = """
     <html><body>

@@ -139,6 +139,43 @@ def test_compute_expected_products_indexes_every_variant(tmp_path):
     assert by_label["Santal Sandalwood + Guava Nectar"].expected.sellable is True
 
 
+def test_compute_expected_products_strips_product_title_prefix(tmp_path):
+    """Shopify variant titles include the product title as a prefix
+    (e.g. 'Body Care Set - Santal Sandalwood + Bergamot Vanilla'). The
+    PDP picker renders only the option-value tail, so we must strip the
+    prefix before sending labels to the crawler — otherwise _HAS_VARIANT_JS
+    fails on every multi-option PDP and downstream flags 'NO BUY BUTTON'
+    on every variant of every set product.
+    """
+    sr = _sr(tmp_path)
+    products = [
+        {
+            "id": "gid://shopify/Product/1",
+            "title": "Body Care Set",
+            "handle": "body-care-set",
+            "totalInventory": 12672,
+            "variants": [
+                _variant(
+                    "gid://shopify/ProductVariant/11",
+                    "Body Care Set - Santal Sandalwood + Santal Sandalwood",
+                    10401,
+                ),
+                _variant(
+                    "gid://shopify/ProductVariant/12",
+                    "Body Care Set - Guava Nectar + Guava Nectar",
+                    0,
+                ),
+            ],
+        },
+    ]
+    expected = compute_expected_products(products, sr)
+    labels = expected["body-care-set"].variant_labels()
+    assert labels == [
+        "Santal Sandalwood + Santal Sandalwood",
+        "Guava Nectar + Guava Nectar",
+    ]
+
+
 def test_flags_for_observation_matches_variant_label_exactly(tmp_path):
     """SALES LEAK only fires when the matched variant says sellable and the
     observed text says sold out. Guava variant (OOS) showing SOLD OUT is

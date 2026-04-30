@@ -187,10 +187,23 @@ class AtcCrawler:
         url: str,
         variant_label: str | None,
     ) -> list[VariantObservation]:
+        # If the URL is a PDP and the ATC's containing card resolved to no
+        # product link (cardHandle=null), attribute the observation to the
+        # page's own handle rather than leaving it None. Otherwise downstream
+        # code treats "no observation matched the page handle" as a hard
+        # NO_BUY_BUTTON flag, which is wrong when there IS an ATC visible
+        # but the surrounding markup doesn't expose a /products/ link
+        # (common on bundle/set PDPs where the SOLD OUT button's container
+        # has no related-product anchor for cardHandle to grab).
+        url_handle: str | None = None
+        if "/products/" in url:
+            tail = url.split("/products/", 1)[1]
+            url_handle = tail.split("/")[0].split("?")[0] or None
+
         return [
             VariantObservation(
                 url=url,
-                product_handle=entry.get("product_handle"),
+                product_handle=entry.get("product_handle") or url_handle,
                 variant_label=variant_label,
                 present=bool(entry.get("visible")),
                 enabled=bool(entry.get("enabled")),
