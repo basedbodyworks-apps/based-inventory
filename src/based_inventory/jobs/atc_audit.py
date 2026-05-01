@@ -317,12 +317,12 @@ def _run(cfg: Config) -> None:
 
     now_iso = datetime.now(timezone.utc).isoformat()  # noqa: UP017
 
-    # Post only flags that were also observed in the previous run. New
-    # flags get recorded but not posted — this suppresses single-run
-    # hydration-timing false positives, which have been the dominant
-    # source of noise during the parallel-run period. A genuinely
-    # persistent issue gets posted on its second consecutive observation
-    # (max 1 day delay given the daily cron cadence).
+    # Post any flag that hasn't already been posted to Slack. The cron
+    # is weekly (Mon 13:00 UTC), so a 2-run persistence requirement
+    # would buy a 2-week delay on real ATC outages. should_post_atc_flag
+    # returns True for both first-observation and previously-seen-but-
+    # unposted entries, so a genuine break surfaces immediately and a
+    # repeat observation of the same break doesn't double-post.
     postable_flags = _dedupe_flags_by_state_key(
         [f for f in all_flags if state.should_post_atc_flag(f.state_key)]
     )
@@ -337,13 +337,13 @@ def _run(cfg: Config) -> None:
     state.save(cfg.state_path)
 
     logger.info(
-        "Flag status: %d postable (persisted 2+ runs), %d total flagged this run",
+        "Flag status: %d postable (new or unposted), %d total flagged this run",
         len(postable_flags),
         len(all_flags),
     )
 
     if not postable_flags:
-        logger.info("No flags have persisted 2 consecutive runs; nothing to post")
+        logger.info("No new ATC flags this run; nothing to post")
         return
 
     blocks = build_atc_blocks(postable_flags)

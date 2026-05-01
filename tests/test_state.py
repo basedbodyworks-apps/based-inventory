@@ -87,42 +87,43 @@ def test_load_wrong_value_types_returns_empty(tmp_path: Path):
     assert state.atc_flags == {}
 
 
-def test_should_post_atc_flag_requires_prior_observation(tmp_path: Path):
-    """A flag must have been observed in a prior run (persisted) before
-    it's eligible to post. First-run observations are silently recorded."""
+def test_should_post_atc_flag_posts_first_observation(tmp_path: Path):
+    """A flag posts on first observation under the weekly cadence
+    (post-2026-04-30). The 2-run persistence requirement was dropped
+    when the cron moved from daily to weekly — waiting 2 weeks on a
+    real ATC outage was unacceptable."""
     state = AlertState.load(tmp_path / "s.json")
     key = "gid://shopify/ProductVariant/1::/products/x::SALES_LEAK"
 
-    # Run 1: first observation. Not postable yet.
-    assert state.should_post_atc_flag(key) is False
+    # Run 1: first observation. Postable immediately.
+    assert state.should_post_atc_flag(key) is True
     state.mark_atc_flag(key, now="2026-04-20T06:00:00Z")
-    assert state.should_post_atc_flag(key) is True  # persisted, not yet posted
+    # Still postable until we mark it posted.
+    assert state.should_post_atc_flag(key) is True
 
     # Mark it posted (as audit does after building the Slack blocks).
     state.mark_atc_flag_posted(key, now="2026-04-20T06:01:00Z")
     assert state.should_post_atc_flag(key) is False  # already posted, don't re-post
 
 
-def test_should_post_atc_flag_ignores_single_run_intermittents(tmp_path: Path):
-    """A flag that appears only in run 1 and not in run 2 should never
-    post — retain_only_atc_flags drops it between runs."""
+def test_should_post_atc_flag_does_not_repost_same_break(tmp_path: Path):
+    """A flag that's already been posted should not post again on the
+    next run, even if the underlying break is still present."""
     state = AlertState.load(tmp_path / "s.json")
     key = "gid://shopify/ProductVariant/1::/products/x::NO_BUY_BUTTON"
 
-    # Run 1: new observation, recorded but not postable.
+    # Run 1: observe + post.
     state.mark_atc_flag(key, now="2026-04-20T06:00:00Z")
-    # End of run 1: no post emitted (should_post_atc_flag was False before
-    # mark — we check before updating state in the audit flow).
+    state.mark_atc_flag_posted(key, now="2026-04-20T06:01:00Z")
     state.save(tmp_path / "s.json")
 
-    # Run 2: flag NOT observed. retain_only_atc_flags prunes it.
+    # Run 2 (next Monday): same break still present. retain keeps it,
+    # mark refreshes last_seen, but should_post returns False because
+    # posted_at is set.
     state2 = AlertState.load(tmp_path / "s.json")
-    state2.retain_only_atc_flags(set())
-    state2.save(tmp_path / "s.json")
-
-    # Run 3: flag re-appears (unrelated timing blip). Treated as brand new.
-    state3 = AlertState.load(tmp_path / "s.json")
-    assert state3.should_post_atc_flag(key) is False
+    state2.retain_only_atc_flags({key})
+    state2.mark_atc_flag(key, now="2026-04-27T06:00:00Z")
+    assert state2.should_post_atc_flag(key) is False
 
 
 def test_clear_atc_flags_not_in_set(tmp_path: Path):

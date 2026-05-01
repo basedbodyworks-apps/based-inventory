@@ -170,14 +170,19 @@ class AlertState:
         return key not in self.atc_flags
 
     def should_post_atc_flag(self, key: str) -> bool:
-        """True if the flag was observed in a prior run (persisted) AND has
-        not yet been posted to Slack. This requires 2+ consecutive
-        observations before posting — single-run crawler hydration blips
-        (the dominant source of false positives) never get through."""
+        """True if this flag has not yet been posted to Slack.
+
+        Pre-2026-04-30 this required a 2-run persistence to filter
+        single-run crawler hydration blips, but that bought us a 1-day
+        delay on the daily cadence. Once the cron moved to weekly
+        (Mon 13:00 UTC), the persistence requirement would have been a
+        2-week delay — unacceptable for real ATC outages. The hydration
+        false-positive surface is now small enough (after the variant
+        prefix-strip + URL-handle fallback + 20s page-load timeout
+        fixes) that posting on the first observation is the right
+        tradeoff."""
         entry = self.atc_flags.get(key)
-        if entry is None:
-            return False
-        return not entry.get("posted_at")
+        return not (entry and entry.get("posted_at"))
 
     def mark_atc_flag(self, key: str, now: str) -> None:
         if key in self.atc_flags:

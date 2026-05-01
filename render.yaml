@@ -51,12 +51,15 @@ services:
       - key: LOG_LEVEL
         value: INFO
 
-  # ATC audit: Shopify-sourced (storefront crawl). Unchanged.
+  # ATC audit: Shopify-sourced (storefront crawl). Weekly Mon 13:00 UTC
+  # (6am Pacific). Was daily; bumped to weekly per Avi 2026-04-30 — the
+  # signal type (Add-to-Cart breaks) doesn't move fast enough to warrant
+  # daily noise once the false-positive rate is contained.
   - type: cron
     name: based-inventory-atc
     runtime: docker
     dockerfilePath: ./Dockerfile
-    schedule: "0 13 * * *"
+    schedule: "0 13 * * 1"
     dockerCommand: python -m based_inventory.jobs.atc_audit
     plan: starter
     envVars:
