@@ -17,6 +17,13 @@ class Config:
     shiphero_access_token: str | None
     shiphero_refresh_token: str | None
     shiphero_api_url: str
+    # Amazon SP-API (used for full FBA inventory breakdown; ShipHero only exposes
+    # `quantity` and only for ~2 of 11 hero SKUs per the 2026-05-08 probe).
+    # Optional: jobs degrade gracefully when unset.
+    amazon_lwa_client_id: str | None
+    amazon_lwa_client_secret: str | None
+    amazon_refresh_token: str | None
+    amazon_marketplace_id: str
     # Slack + Telegram + state
     slack_bot_token: str
     slack_channel: str
@@ -48,6 +55,11 @@ class Config:
             shiphero_refresh_token=optional("SHIPHERO_REFRESH_TOKEN"),
             shiphero_api_url=optional("SHIPHERO_API_URL", "https://public-api.shiphero.com/graphql")
             or "https://public-api.shiphero.com/graphql",
+            amazon_lwa_client_id=optional("AMAZON_LWA_CLIENT_ID"),
+            amazon_lwa_client_secret=optional("AMAZON_LWA_CLIENT_SECRET"),
+            amazon_refresh_token=optional("AMAZON_REFRESH_TOKEN"),
+            amazon_marketplace_id=optional("AMAZON_MARKETPLACE_ID", "ATVPDKIKX0DER")
+            or "ATVPDKIKX0DER",
             slack_bot_token=required("SLACK_BOT_TOKEN"),
             slack_channel=required("SLACK_CHANNEL"),
             telegram_bot_token=optional("TELEGRAM_BOT_TOKEN"),

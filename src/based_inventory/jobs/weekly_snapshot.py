@@ -12,6 +12,7 @@ weekend-merch report).
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,7 +26,12 @@ from based_inventory.shiphero import MERCHDROP_WAREHOUSE_ID, ShipHeroClient, War
 from based_inventory.shiphero_auth import resolve_access_token
 from based_inventory.slack import SlackClient, context, divider, header, section
 
+logger = logging.getLogger(__name__)
+
 LOW = 1000
+
+# Amazon US marketplace ID; only marketplace currently in scope for FBA visibility.
+US_MARKETPLACE_ID = "ATVPDKIKX0DER"
 
 AUDIT_LAYOUT: list[tuple[str, list[str]]] = [
     ("Hair Care", ["Shampoo", "Conditioner", "Hair Elixir"]),
@@ -66,6 +72,8 @@ class ProductLine:
     qty: int
     sku: str | None
     affected_bundles: list[str]
+    fba_qty: int | None = None  # Amazon FBA US-marketplace quantity, if any
+    fetch_error: bool = False  # True if alias SKU lookup failed (rate limit etc)
 
 
 @dataclass(frozen=True)
@@ -113,13 +121,13 @@ def _emoji(qty: int) -> str:
 
 
 def _render_line(line: ProductLine) -> str:
+    if line.fetch_error:
+        return f"⚠️ {line.name}: ShipHero lookup failed (retry next run)"
     if line.sku is None:
         return f"❓ {line.name}: not found in ShipHero"
     text = f"{_emoji(line.qty)} {line.name}: *{line.qty:,}*"
-    if line.qty <= LOW and line.affected_bundles:
-        preview = ", ".join(line.affected_bundles[:5])
-        more = f" +{len(line.affected_bundles) - 5} more" if len(line.affected_bundles) > 5 else ""
-        text += f" -> {preview}{more}"
+    if line.fba_qty is not None:
+        text += f"  (🅰️  FBA: *{line.fba_qty:,}*)"
     return text
 
 
@@ -144,7 +152,8 @@ def build_snapshot_blocks(
     blocks.append(
         context(
             "🟢 5K+  ·  📊 1K-5K  ·  🟡 ≤1K  ·  🟠 ≤750  ·  🔴 ≤500  ·  🚨 ≤100  ·  ⛔ Oversold  "
-            "·  source: ShipHero (Merchdrop)"
+            "·  source: ShipHero (Merchdrop)  ·  🅰️  FBA = Amazon US-marketplace on-hand "
+            "(only shown for SKUs with FBA listings; full FBA breakdown requires Amazon SP-API)"
         )
     )
     return blocks
@@ -251,13 +260,24 @@ def _run(cfg: Config) -> None:
             aliased_skus.add(entry["sku"])
         if "skus" in entry:
             aliased_skus.update(entry["skus"])
+    backfill_failures: set[str] = set()
     for sku in sorted(aliased_skus - known):
         try:
             row = client.fetch_warehouse_product_for_sku(sku, MERCHDROP_WAREHOUSE_ID)
             if row is not None:
                 stock.append(row)
-        except RuntimeError:
-            continue
+            else:
+                # Targeted query returned no edges — SKU genuinely doesn't
+                # exist in this warehouse. Distinct from a fetch failure.
+                logger.warning("Alias backfill: SKU %s has no row in ShipHero", sku)
+        except RuntimeError as exc:
+            # Rate-limit / network / GraphQL error. Do NOT silently swallow:
+            # mark this SKU so downstream resolution can render 'fetch failed'
+            # instead of falsely claiming the product doesn't exist (which is
+            # what bit the 2026-05-08 run — CLAY1 has on_hand=4170 but the
+            # post said 'not found in ShipHero').
+            backfill_failures.add(sku)
+            logger.warning("Alias backfill failed for SKU %s: %s", sku, exc)
 
     registry = build_registry(kits, stock, COMPONENTS_PATH)
 
@@ -267,6 +287,42 @@ def _run(cfg: Config) -> None:
         by_name.setdefault((s.product_name or "").strip(), []).append(s)
         by_sku.setdefault(s.sku, s)
 
+    # Amazon FBA quantities are queried per resolved SKU. Most SKUs return
+    # an empty list (only SKUs explicitly listed on Amazon FBA have rows).
+    # Only US marketplace is summed; non-US (CA, MX) is currently out of scope.
+    def _fba_qty_for(skus: tuple[str, ...]) -> int | None:
+        total = 0
+        any_row = False
+        for sku in skus:
+            try:
+                rows = client.fetch_fba_inventory(sku)
+            except RuntimeError:
+                continue
+            for r in rows:
+                if r.get("marketplace_id") != US_MARKETPLACE_ID:
+                    continue
+                any_row = True
+                total += int(r.get("quantity") or 0)
+        return total if any_row else None
+
+    def _alias_had_fetch_error(name: str) -> bool:
+        """True if this name's alias points to SKUs that all failed to
+        load this run (rate-limit / network). Distinguishes 'we couldn't
+        check' from 'this product genuinely doesn't exist'."""
+        alias = aliases.get(name)
+        if not alias:
+            return False
+        alias_skus: list[str] = []
+        if "sku" in alias:
+            alias_skus.append(alias["sku"])
+        if "skus" in alias:
+            alias_skus.extend(alias["skus"])
+        if not alias_skus:
+            return False
+        # If every aliased SKU failed to load AND none made it into by_sku,
+        # the alias couldn't resolve through no fault of the data itself.
+        return all(s in backfill_failures and s not in by_sku for s in alias_skus)
+
     sections: list[tuple[str, list[ProductLine]]] = []
     for category, names in AUDIT_LAYOUT:
         lines: list[ProductLine] = []
@@ -275,7 +331,15 @@ def _run(cfg: Config) -> None:
                 name, by_name, by_sku, registry.bundle_skus, discontinued, aliases
             )
             if resolved is None:
-                lines.append(ProductLine(name=name, qty=0, sku=None, affected_bundles=[]))
+                lines.append(
+                    ProductLine(
+                        name=name,
+                        qty=0,
+                        sku=None,
+                        affected_bundles=[],
+                        fetch_error=_alias_had_fetch_error(name),
+                    )
+                )
                 continue
             lines.append(
                 ProductLine(
@@ -283,6 +347,7 @@ def _run(cfg: Config) -> None:
                     qty=resolved.qty,
                     sku=resolved.primary_sku,
                     affected_bundles=_affected_bundle_names(resolved.skus, registry),
+                    fba_qty=_fba_qty_for(resolved.skus),
                 )
             )
         sections.append((category, lines))

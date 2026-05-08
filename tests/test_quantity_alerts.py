@@ -158,3 +158,90 @@ def test_build_blocks_no_velocity_falls_back_to_no_recent_depletion() -> None:
     blocks = build_blocks([_alert(velocity_per_day=0.0, weeks_of_cover=99999.0, on_hand=50)])
     text = blocks[2]["text"]["text"]
     assert "no recent depletion observed" in text
+
+
+# --------------------------------------------------------------------------
+# Velocity interpretation: in-stock burst rate vs 7d average annotation
+# --------------------------------------------------------------------------
+
+
+def test_format_sample_window_renders_days_hours_or_minutes() -> None:
+    from based_inventory.jobs.quantity_alerts import _format_sample_window
+
+    assert _format_sample_window(2.5) == "2.5d"
+    assert _format_sample_window(0.5) == "12.0h"
+    assert _format_sample_window(0.04) == "57.6min" or _format_sample_window(0.04).endswith("min")
+
+
+def test_velocity_interpretation_returns_none_for_full_window() -> None:
+    from based_inventory.jobs.quantity_alerts import _velocity_interpretation
+
+    # If the sample window matches the requested window, no annotation needed.
+    assert _velocity_interpretation(2000, 7.0, 7) is None
+    assert _velocity_interpretation(2000, 6.7, 7) is None  # within 95% threshold
+
+
+def test_velocity_interpretation_surfaces_sample_context_without_calendar_avg() -> None:
+    from based_inventory.jobs.quantity_alerts import _velocity_interpretation
+
+    # Saturated case: 2,377 units captured in 0.3 days -> short sample window.
+    annotation = _velocity_interpretation(2377, 0.3, 7)
+    assert annotation is not None
+    assert "2,377 units" in annotation
+    assert "shipped last 7d" in annotation
+    # Calendar-avg framing was removed 2026-05-08 (operationally misleading).
+    assert "calendar avg" not in annotation
+    assert "calendar" not in annotation
+    # Sample window rendered in hours/minutes for short spans.
+    assert "h " in annotation or "min " in annotation
+    assert "In-stock rate sampled" in annotation
+
+
+def test_build_blocks_renders_burst_rate_label_when_window_short() -> None:
+    blocks = build_blocks(
+        [
+            _alert(
+                velocity_per_day=1667.0,
+                weeks_of_cover=0.0,
+                depletion_units=2377,
+                effective_window_days=0.3,
+            )
+        ]
+    )
+    text = blocks[2]["text"]["text"]
+    assert "1,667/day in-stock rate" in text
+    assert "2,377 units shipped last 7d" in text
+    assert "In-stock rate sampled" in text
+    assert "calendar avg" not in text
+
+
+def test_build_blocks_renders_normal_velocity_label_when_window_full() -> None:
+    blocks = build_blocks(
+        [
+            _alert(
+                velocity_per_day=156.0,
+                weeks_of_cover=0.05,
+                depletion_units=1092,
+                effective_window_days=7.0,
+            )
+        ]
+    )
+    text = blocks[2]["text"]["text"]
+    # Full-window: should label as "velocity" not "in-stock rate"
+    assert "/day velocity" in text
+    assert "in-stock rate" not in text
+    # No burst-rate annotation because the sample matched the requested window
+    assert "Burst rate sampled" not in text
+
+
+def test_build_blocks_renders_fba_quantity_when_present() -> None:
+    blocks = build_blocks([_alert(fba_quantity=2350)])
+    text = blocks[2]["text"]["text"]
+    assert "Amazon FBA on-hand" in text
+    assert "2,350" in text
+
+
+def test_build_blocks_omits_fba_when_no_record() -> None:
+    blocks = build_blocks([_alert(fba_quantity=None)])
+    text = blocks[2]["text"]["text"]
+    assert "Amazon FBA" not in text

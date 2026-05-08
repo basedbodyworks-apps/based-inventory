@@ -67,6 +67,9 @@ OVERSOLD_LABEL = "🚨🚨 OVERSOLD"
 VELOCITY_WINDOW_DAYS = 7
 VELOCITY_MAX_PAGES = 5
 
+# Amazon US marketplace ID; only marketplace currently in scope for FBA visibility.
+US_MARKETPLACE_ID = "ATVPDKIKX0DER"
+
 
 @dataclass
 class Alert:
@@ -82,6 +85,14 @@ class Alert:
     inbound_po_count: int = 0
     inbound_latest_po_date: str | None = None
     inbound_latest_ship_date: str | None = None
+    # Velocity interpretation context (so readers know what 1,667/day means).
+    # depletion_units = total units captured in the sample (saturates at 500).
+    # effective_window_days = actual span the captured events covered. When
+    # this is much smaller than VELOCITY_WINDOW_DAYS (7), the velocity is an
+    # in-stock burst rate, NOT a 7-day average.
+    depletion_units: int = 0
+    effective_window_days: float = 0.0
+    fba_quantity: int | None = None  # Amazon FBA quantity (US marketplace) if present
 
 
 def _tier_for(on_hand: int) -> tuple[int, str] | None:
@@ -101,6 +112,52 @@ def _format_cover(weeks: float) -> str:
     if weeks < 1:
         return f"{weeks:.2f}w"
     return f"{weeks:.1f}w"
+
+
+def _format_sample_window(days: float) -> str:
+    """Render the velocity sample window in human terms."""
+    if days >= 1.0:
+        return f"{days:.1f}d"
+    hours = days * 24
+    if hours >= 1.0:
+        return f"{hours:.1f}h"
+    return f"{hours * 60:.0f}min"
+
+
+def _velocity_interpretation(
+    depletion_units: int,
+    effective_window_days: float,
+    requested_window_days: int,
+) -> str | None:
+    """Return a one-line annotation showing the sample size + window behind the
+    in-stock rate.
+
+    Operational consumers (Avi, Carlos) care about the rate when product is
+    actively selling, NOT a calendar average diluted by OOS days — those just
+    become backorders. So we surface what's load-bearing for planning: how
+    many units depleted, over how much in-stock activity the rate was
+    sampled. The calendar-avg framing was actively misleading and was
+    removed 2026-05-08 after operational feedback.
+
+    Known limitation: the rate does NOT account for channel-availability
+    state. When ops marks a SKU OOS on Shopify / TTS / Amazon, demand stops
+    registering on that channel even though customer interest may persist.
+    Bot has no view into those flags, so the in-stock rate it reports is a
+    "rate during periods where SOME channel was selling," not steady-state
+    demand. Operator judgment (knowing which channels were live) outranks
+    this number when they disagree. See docs/plans/2026-05-08-channel-state-
+    limitations.md if/when we add OOS-flag tracking.
+    """
+    if effective_window_days <= 0:
+        return None
+    # If we got the full requested window, velocity is unambiguous.
+    if effective_window_days >= requested_window_days * 0.95:
+        return None
+    sample = _format_sample_window(effective_window_days)
+    return (
+        f"📊  {depletion_units:,} units shipped last {requested_window_days}d. "
+        f"In-stock rate sampled over {sample} of activity."
+    )
 
 
 def _format_channel_mix(counts: dict[str, int]) -> str | None:
@@ -139,11 +196,25 @@ def build_blocks(
             + (" (already owe customers units)" if a.on_hand < 0 else ""),
         ]
         if a.velocity_per_day > 0:
-            text_lines.append(
-                f"⏱️  {_format_cover(a.weeks_of_cover)} cover at {a.velocity_per_day:.0f}/day velocity"
+            # Label the velocity correctly: if the sample window is much
+            # smaller than requested, this is in-stock burst rate, not avg.
+            is_burst = (
+                a.effective_window_days > 0
+                and a.effective_window_days < VELOCITY_WINDOW_DAYS * 0.95
             )
+            label = "in-stock rate" if is_burst else "velocity"
+            text_lines.append(
+                f"⏱️  {_format_cover(a.weeks_of_cover)} cover at {a.velocity_per_day:,.0f}/day {label}"
+            )
+            interp = _velocity_interpretation(
+                a.depletion_units, a.effective_window_days, VELOCITY_WINDOW_DAYS
+            )
+            if interp:
+                text_lines.append(interp)
         elif a.on_hand >= 0:
             text_lines.append("⏱️  no recent depletion observed")
+        if a.fba_quantity is not None:
+            text_lines.append(f"🅰️   Amazon FBA on-hand: *{a.fba_quantity:,}* units (US)")
         if a.inbound_outstanding > 0:
             eta_bits = []
             if a.inbound_latest_ship_date:
@@ -266,6 +337,8 @@ def _run(cfg: Config) -> None:
 
     alerts: list[Alert] = []
     new_tiers: dict[str, int] = {}
+    # FBA quantity is queried lazily per SKU at alert time (cheap; only fires
+    # for at-risk SKUs, not every candidate). Only US marketplace is summed.
     for s in candidates:
         tier_info = _tier_for(s.on_hand)
         if tier_info is None:
@@ -277,6 +350,19 @@ def _run(cfg: Config) -> None:
             continue
         cover = sku_cover.get(s.sku)
         inb = inbound.get(s.sku) or {}
+
+        # Pull FBA quantity for the at-risk SKU. Only ~10 SKUs cross thresholds
+        # per run so the credit cost is bounded. Best-effort: if it errors or
+        # the SKU has no FBA record, fba_quantity stays None.
+        fba_qty: int | None = None
+        try:
+            fba_rows = client.fetch_fba_inventory(s.sku)
+            us_rows = [r for r in fba_rows if r.get("marketplace_id") == US_MARKETPLACE_ID]
+            if us_rows:
+                fba_qty = sum(int(r.get("quantity") or 0) for r in us_rows)
+        except RuntimeError:
+            pass
+
         alerts.append(
             Alert(
                 label=label,
@@ -291,6 +377,9 @@ def _run(cfg: Config) -> None:
                 inbound_po_count=inb.get("po_count", 0),
                 inbound_latest_po_date=inb.get("latest_po_date"),
                 inbound_latest_ship_date=inb.get("latest_ship_date"),
+                depletion_units=depletion.get(s.sku, 0),
+                effective_window_days=eff_windows.get(s.sku, 0.0),
+                fba_quantity=fba_qty,
             )
         )
 

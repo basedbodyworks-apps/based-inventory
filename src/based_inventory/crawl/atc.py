@@ -28,7 +28,7 @@ import time
 from dataclasses import dataclass
 from types import TracebackType
 
-from playwright.sync_api import Browser, Page, Playwright, sync_playwright
+from playwright.sync_api import Browser, BrowserContext, Page, Playwright, Route, sync_playwright
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,21 @@ _USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
+
+# Resource types we don't need for ATC text scanning. Blocking these at the
+# context level cuts per-page allocations dramatically (Klaviyo/Postscript/
+# Triple Whale/Instant.so all pull heavy assets we don't read). Stylesheets
+# are NOT blocked — visibility checks via getBoundingClientRect depend on
+# layout, and SOLD OUT vs ADD TO CART differentiation reads display state.
+_BLOCKED_RESOURCE_TYPES = frozenset({"image", "font", "media"})
+
+# Memory-saver flags for headless Chromium on a 512Mi container. These are
+# the standard "running Chromium in Docker / Render" set: --disable-dev-shm-usage
+# avoids /dev/shm exhaustion (Render mounts a small tmpfs), --disable-gpu is
+# a no-op for headless but suppresses GPU-init warnings, --no-sandbox is
+# required because Render's container runs unprivileged. --single-process
+# is intentionally NOT included — it's known to crash on heavy pages.
+_LAUNCH_ARGS = ["--disable-dev-shm-usage", "--disable-gpu", "--no-sandbox"]
 
 # Scan JS: walks the DOM and returns one entry per visible ATC leaf tagged
 # with the product handle of its containing card. The scanner runs after
@@ -138,6 +153,13 @@ _HAS_VARIANT_JS = r"""
 """
 
 
+def _block_heavy_assets(route: Route) -> None:
+    if route.request.resource_type in _BLOCKED_RESOURCE_TYPES:
+        route.abort()
+    else:
+        route.continue_()
+
+
 @dataclass(frozen=True)
 class VariantObservation:
     url: str
@@ -154,10 +176,21 @@ class AtcCrawler:
         self.throttle_ms = throttle_ms
         self._playwright: Playwright | None = None
         self._browser: Browser | None = None
+        self._context: BrowserContext | None = None
 
     def __enter__(self) -> AtcCrawler:
         self._playwright = sync_playwright().start()
-        self._browser = self._playwright.chromium.launch(headless=self.headless)
+        self._browser = self._playwright.chromium.launch(
+            headless=self.headless,
+            args=_LAUNCH_ARGS,
+        )
+        # Single shared context for the lifetime of the crawler. Per-URL
+        # context churn was leaking ~10MB/URL on Render's 512Mi tier; the
+        # Jan 2026 ATC audit OOM'd around URL 52/113 even though every
+        # context.close() ran. Pages on a shared context still close cleanly
+        # and reclaim their per-page state.
+        self._context = self._browser.new_context(user_agent=_USER_AGENT)
+        self._context.route("**/*", _block_heavy_assets)
         return self
 
     def __exit__(
@@ -166,16 +199,17 @@ class AtcCrawler:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None:
+        if self._context:
+            self._context.close()
         if self._browser:
             self._browser.close()
         if self._playwright:
             self._playwright.stop()
 
     def _new_page(self) -> Page:
-        if self._browser is None:
+        if self._context is None:
             raise RuntimeError("AtcCrawler must be used as a context manager")
-        ctx = self._browser.new_context(user_agent=_USER_AGENT)
-        return ctx.new_page()
+        return self._context.new_page()
 
     def _throttle(self) -> None:
         low, high = self.throttle_ms
@@ -249,7 +283,7 @@ class AtcCrawler:
                     final_url,
                     elapsed,
                 )
-                page.context.close()
+                page.close()
                 return []
 
             # Wait for React to hydrate the PAGE'S OWN ATC, not just any
@@ -322,7 +356,7 @@ class AtcCrawler:
         except Exception as exc:
             elapsed = time.monotonic() - t0
             logger.warning("Failed to load %s after %.1fs: %s", url, elapsed, exc)
-            page.context.close()
+            page.close()
             return []
 
         observations: list[VariantObservation] = []
@@ -381,7 +415,7 @@ class AtcCrawler:
                 observations.extend(self._observations_from_scan(raw, url=url, variant_label=None))
         except Exception as exc:
             logger.warning("ATC scan failed on %s: %s", url, exc)
-            page.context.close()
+            page.close()
             return []
 
         elapsed = time.monotonic() - t0
@@ -394,7 +428,7 @@ class AtcCrawler:
         )
 
         self._throttle()
-        page.context.close()
+        page.close()
         return observations
 
     def audit_inline_html(
@@ -430,4 +464,4 @@ class AtcCrawler:
             raw = page.evaluate(_ATC_SCAN_JS)
             return self._observations_from_scan(raw, url=url, variant_label=None)
         finally:
-            page.context.close()
+            page.close()

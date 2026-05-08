@@ -223,7 +223,13 @@ class ShipHeroClient:
         """Targeted fetch: a single SKU's warehouse_product row.
 
         Used to fill in component SKUs that aren't in the first-page
-        warehouse_products result. Cheap (single-row complexity).
+        warehouse_products result. Trimmed to the minimum projection
+        (sku/on_hand/available + product) — matches the bulk query's
+        2026-04-30 trim so backfill calls don't blow the credit pool
+        when the bulk fetch already grazed the ceiling. Without this,
+        weekly_snapshot's alias backfill silently fails on rate-limit
+        and the resulting post claims live SKUs are 'not found in
+        ShipHero' (e.g. CLAY1=4170 reported as missing on 2026-05-08).
         """
         query = """
         query($sku: String!, $warehouse_id: String!) {
@@ -234,10 +240,6 @@ class ShipHeroClient:
                   sku
                   on_hand
                   available
-                  allocated
-                  backorder
-                  reserve_inventory
-                  sell_ahead
                   product { name kit }
                 }
               }
@@ -255,13 +257,60 @@ class ShipHeroClient:
             sku=n["sku"],
             on_hand=n["on_hand"] or 0,
             available=n["available"] or 0,
-            allocated=n["allocated"] or 0,
-            backorder=n["backorder"] or 0,
-            reserve_inventory=n["reserve_inventory"] or 0,
-            sell_ahead=n["sell_ahead"] or 0,
+            allocated=0,
+            backorder=0,
+            reserve_inventory=0,
+            sell_ahead=0,
             product_name=product.get("name") or "",
             is_kit=bool(product.get("kit")),
         )
+
+    # -----------------------------------------------------------------------
+    # Amazon FBA inventory (sparse — only Amazon-listed SKUs return rows)
+    # -----------------------------------------------------------------------
+    def fetch_fba_inventory(self, sku: str) -> list[dict[str, Any]]:
+        """Return ShipHero's view of a SKU's Amazon FBA inventory.
+
+        Each row represents one (marketplace_id, merchant_id) tuple. ShipHero's
+        FbaInventory type only exposes 5 fields (id, legacy_id, quantity,
+        marketplace_id, merchant_id) per a 2026-05-08 schema introspection;
+        for the rich breakdown (fulfillable / inbound / reserved / unsellable)
+        we'd need to talk to Amazon SP-API directly.
+
+        Empirical note: most Based hero SKUs return an empty list here; only
+        SKUs explicitly listed on Amazon FBA have rows. The bot uses this as
+        a best-effort visibility hint, not a complete inventory picture.
+        """
+        query = """
+        query($sku: String!) {
+          products(sku: $sku) {
+            data {
+              edges {
+                node {
+                  sku
+                  fba_inventory {
+                    id
+                    legacy_id
+                    quantity
+                    marketplace_id
+                    merchant_id
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+        payload = self._execute(query, {"sku": sku})
+        edges = payload["data"]["products"]["data"]["edges"]
+        if not edges:
+            return []
+        out: list[dict[str, Any]] = []
+        for edge in edges:
+            n = edge.get("node") or {}
+            for row in n.get("fba_inventory") or []:
+                out.append(row)
+        return out
 
     # -----------------------------------------------------------------------
     # Kit definitions (multi-channel bundles)

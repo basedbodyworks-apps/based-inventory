@@ -79,8 +79,12 @@ def test_snapshot_renders_categories() -> None:
     combined = "\n".join(texts)
     assert "3,000" in combined
     assert "500" in combined
-    assert "Shower Duo" in combined
-    assert "Body Care Set" in combined
+    # Bundle list is no longer appended inline (audit table is a snapshot,
+    # not an alert; per-row bundle bleed was making rows multi-line ugly).
+    # Bundles are still tracked on the dataclass for any future surface
+    # that wants them; they're just not rendered into the Slack table.
+    assert "Shower Duo" not in combined
+    assert "Body Care Set" not in combined
 
     legend = blocks[-1]["elements"][0]["text"]
     assert "5K+" in legend
@@ -181,9 +185,7 @@ def test_alias_aggregates_across_skus() -> None:
         _stock("BB-ONE-BTAL-100ML", "Tallow 100ml", 80),
     ]
     by_name, by_sku = _index(stocks)
-    aliases = {
-        "Tallow Moisturizer": {"skus": ["BB-ONE-BTAL-50ML", "BB-ONE-BTAL-100ML"]}
-    }
+    aliases = {"Tallow Moisturizer": {"skus": ["BB-ONE-BTAL-50ML", "BB-ONE-BTAL-100ML"]}}
     resolved = _resolve_to_stock(
         "Tallow Moisturizer", by_name, by_sku, frozenset(), _empty_disc(), aliases=aliases
     )
@@ -220,9 +222,7 @@ def test_resolver_returns_none_when_all_candidates_filtered() -> None:
         _stock("KIT-B", "Foo Bar Pack", 500, is_kit=True),
     ]
     by_name, by_sku = _index(stocks)
-    resolved = _resolve_to_stock(
-        "Foo Bar", by_name, by_sku, frozenset(), _empty_disc(), aliases={}
-    )
+    resolved = _resolve_to_stock("Foo Bar", by_name, by_sku, frozenset(), _empty_disc(), aliases={})
     assert resolved is None
 
 
